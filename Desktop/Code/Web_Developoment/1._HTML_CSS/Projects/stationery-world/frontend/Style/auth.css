@@ -1,0 +1,70 @@
+/* FULL BACKGROUND */
+.auth-bg {
+  height: 100vh;
+  width: 100%;
+  background: linear-gradient(
+      rgba(0, 0, 0, 0.65),
+      rgba(0, 0, 0, 0.65)
+    ),
+    url("/src/assets/bg-customer.jpg");
+  background-size: cover;
+  background-position: center;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* CARD */
+.auth-card {
+  width: 360px;
+  padding: 30px;
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(12px);
+  border-radius: 14px;
+  color: white;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+/* TITLE */
+.auth-card h2 {
+  text-align: center;
+}
+
+/* SUBTEXT */
+.auth-subtext {
+  font-size: 14px;
+  opacity: 0.85;
+  text-align: center;
+}
+
+/* INPUT */
+.auth-input {
+  padding: 12px;
+  border-radius: 8px;
+  border: none;
+  outline: none;
+}
+
+/* BUTTON */
+.auth-btn {
+  padding: 12px;
+  background: #ffcc00;
+  border: none;
+  border-radius: 8px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+/* LINK */
+.auth-link {
+  text-align: center;
+  font-size: 14px;
+  cursor: pointer;
+  opacity: 0.9;
+}
+
+.auth-link:hover {
+  text-decoration: underline;
+}

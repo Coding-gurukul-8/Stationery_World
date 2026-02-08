@@ -1,0 +1,59 @@
+const express = require('express');
+const router = express.Router();
+const {
+  signup,
+  login,
+  getProfile,
+  updateProfile,
+  getAllUsers
+} = require('./user.controller');
+const { authMiddleware, adminMiddleware } = require('./user.middleware');
+
+// Public routes
+router.post('/signup', signup);
+router.post('/login', login);
+
+// Protected routes (require authentication)
+router.get('/profile', authMiddleware, getProfile);
+router.put('/profile', authMiddleware, updateProfile);
+
+// Admin-only routes
+router.get('/all', authMiddleware, adminMiddleware, getAllUsers);
+
+// Admin: update a user (except role)
+router.put('/:id', authMiddleware, adminMiddleware, async (req, res, next) => {
+  // delegate to controller function added below
+  try {
+    const { id } = req.params;
+    const userId = parseInt(id);
+    if (isNaN(userId)) return res.status(400).json({ success: false, message: 'Invalid user id.' });
+
+    // Build allowed update fields only
+    const allowed = ['name','email','phone','isActive','addressLine1','addressLine2','city','state','postalCode','country','photoUrl'];
+    const payload = {};
+    for (const k of allowed) {
+      if (req.body[k] !== undefined) payload[k] = req.body[k];
+    }
+
+    // Prevent changing role through this endpoint
+    if (req.body.role !== undefined) return res.status(403).json({ success: false, message: 'Role cannot be changed here.' });
+
+    // Check unique constraints: email & phone
+    if (payload.email) {
+      const existing = await prisma.user.findUnique({ where: { email: payload.email } });
+      if (existing && existing.id !== userId) return res.status(409).json({ success: false, message: 'Email already in use.' });
+    }
+    if (payload.phone) {
+      const existingPhone = await prisma.user.findUnique({ where: { phone: payload.phone } });
+      if (existingPhone && existingPhone.id !== userId) return res.status(409).json({ success: false, message: 'Phone number already in use.' });
+    }
+
+    const updated = await prisma.user.update({ where: { id: userId }, data: payload, select: { id:true,name:true,email:true,phone:true,role:true,isActive:true,addressLine1:true,addressLine2:true,city:true,state:true,postalCode:true,country:true,photoUrl:true,createdAt:true,updatedAt:true } });
+
+    return res.status(200).json({ success: true, message: 'User updated successfully', data: updated });
+  } catch (err) {
+    next(err);
+  }
+});
+
+module.exports = router;

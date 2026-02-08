@@ -1,0 +1,110 @@
+.admin-dashboard {
+  background: #f5f7fa;
+  color: #000;
+  width: 100%;
+  min-height: 100vh;
+  padding: 24px;
+  min-height: 100%;
+}
+.admin-content {
+  flex: 1;
+  min-height: 100vh;
+  overflow-y: auto;
+}
+  
+
+/* ===== PROFILE CARD ===== */
+.admin-profile-card {
+  display: flex;
+  gap: 24px;
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 32px;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05);
+}
+
+.profile-left {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+}
+.profile-left img {
+  width: 110px;
+  height: 110px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.profile-img-wrapper {
+  position: relative;
+  width: 120px;
+  height: 120px;
+}
+
+.profile-img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.edit-icon {
+  position: absolute;
+  bottom: 6px;
+  right: 6px;
+  background: #000;
+  color: #fff;
+  padding: 6px;
+  border-radius: 50%;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.profile-right h2 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.profile-right p {
+  margin: 4px 0;
+  color: #555;
+}
+
+
+/* ===== STATS ===== */
+.stats-section h3 {
+  margin-bottom: 16px;
+}
+
+.quick-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+.stat-box {
+  background: #ffffff;
+  border: 1px solid #eee;
+  border-radius: 10px;
+  padding: 20px;
+}
+.stat-card {
+  background: #ffffff;
+  padding: 20px;
+  border-radius: 12px;
+  font-size: 18px;
+  font-weight: 600;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05);
+}
+.stat-box h4 {
+  margin: 0;
+  font-size: 14px;
+  color: #777;
+}
+
+.stat-box p {
+  margin-top: 10px;
+  font-size: 22px;
+  font-weight: bold;
+}
+
+
