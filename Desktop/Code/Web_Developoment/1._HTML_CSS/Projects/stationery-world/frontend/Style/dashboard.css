@@ -149,9 +149,11 @@ textarea { min-height: 90px }
   justify-content: space-between;
 }
 
+.topbar-search { flex: 1; display: flex; justify-content: center; }
 .topbar-search input {
-  margin-left: 20px;
-  width: 320px;
+  margin-left: 0;
+  width: 360px;
+  max-width: calc(100% - 220px);
   padding: 8px 12px;
   border-radius: 8px;
   border: 1px solid #e5e7eb;
@@ -160,9 +162,12 @@ textarea { min-height: 90px }
   transition: width 180ms ease;
 }
 
-/* Icons alignment for topbar */
+/* Right-side actions (icons + avatar) */
+.topbar-actions { display: flex; align-items: center; gap: 14px; margin-left: 12px }
 .topbar .topbar-icons { display:flex; gap:12px; align-items:center }
-.topbar .topbar-icons .icon-link { display:inline-flex; align-items:center; gap:8px }
+.topbar .topbar-icons .icon-link { display:inline-flex; align-items:center; gap:8px; padding:6px 8px; border-radius:8px }
+.topbar .topbar-icons .count { background:#eee; padding:2px 6px; border-radius:12px; margin-left:6px }
+
 
 
 .topbar-admin {
