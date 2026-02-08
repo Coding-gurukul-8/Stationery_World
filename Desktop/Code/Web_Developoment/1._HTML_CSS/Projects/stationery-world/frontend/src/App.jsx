@@ -21,6 +21,12 @@ import AdminShopping from "./pages/admin/AdminShopping";
 import AdminWishlist from "./pages/admin/AdminWishlist";
 import Shop from "./pages/Shop";
 
+// Customer pages & layout
+import CustomerLayout from "./components/CustomerLayout";
+import You from "./pages/customer/You";
+import Wishlist from "./pages/customer/Wishlist";
+import Cart from "./pages/customer/Cart";
+
 export default function App() {
   return (
     <Routes>
