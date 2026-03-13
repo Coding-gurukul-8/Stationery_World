@@ -1,0 +1,62 @@
+.verify-otp-page {
+  height: 100vh;
+  width: 100%;
+  background: linear-gradient(
+      rgba(0, 0, 0, 0.7),
+      rgba(0, 0, 0, 0.7)
+    ),
+    url("/src/assets/bg-admin.jpg");
+  background-size: cover;
+  background-position: center;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.verify-otp-card {
+  width: 360px;
+  padding: 30px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(12px);
+  color: white;
+  text-align: center;
+}
+
+.verify-otp-card h1 {
+  margin-bottom: 10px;
+}
+
+.verify-otp-card p {
+  font-size: 14px;
+  margin-bottom: 20px;
+  opacity: 0.85;
+}
+
+.otp-input {
+  width: 100%;
+  padding: 14px;
+  border-radius: 8px;
+  border: none;
+  outline: none;
+
+  font-size: 18px;
+  text-align: center;
+  letter-spacing: 6px;
+  margin-bottom: 20px;
+}
+
+.verify-btn {
+  width: 100%;
+  padding: 12px;
+  border: none;
+  border-radius: 8px;
+  background-color: #ffcc00;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.verify-btn:hover {
+  opacity: 0.9;
+}

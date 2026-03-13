@@ -1,0 +1,68 @@
+.page-transition-overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(26, 22, 18, 0.20);
+  backdrop-filter: blur(6px);
+  z-index: 1100;
+  pointer-events: none;
+  opacity: 0;
+  animation: pageFade 0.55s ease-out forwards;
+}
+
+.page-transition-pattern {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle at 20% 20%, rgba(201,168,76,0.25) 0%, transparent 60%),
+                    radial-gradient(circle at 80% 40%, rgba(77,114,96,0.18) 0%, transparent 55%),
+                    radial-gradient(circle at 50% 80%, rgba(192,113,79,0.18) 0%, transparent 50%);
+  opacity: 0;
+  animation: pagePattern 0.55s ease-out forwards;
+}
+
+.page-transition-icon {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.12);
+  border: 1px solid rgba(255,255,255,0.18);
+  display: grid;
+  place-items: center;
+  color: rgba(255,255,255,0.92);
+  box-shadow: 0 16px 32px rgba(0,0,0,0.25);
+  transform: scale(0.8);
+  animation: pageIconPop 0.55s ease-out forwards;
+}
+
+.page-transition-text {
+  margin-top: 14px;
+  color: rgba(255,255,255,0.85);
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0;
+  animation: pageTextFade 0.55s ease-out 0.2s forwards;
+}
+
+@keyframes pageFade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes pagePattern {
+  from { opacity: 0; transform: scale(0.92); }
+  to   { opacity: 0.52; transform: scale(1); }
+}
+
+@keyframes pageIconPop {
+  0%   { transform: scale(0.5) translateY(16px); opacity: 0; }
+  60%  { transform: scale(1.05) translateY(-6px); opacity: 1; }
+  100% { transform: scale(1) translateY(0); }
+}
+
+@keyframes pageTextFade {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

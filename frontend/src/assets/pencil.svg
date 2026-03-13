@@ -1,0 +1,39 @@
+<svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" fill="none">
+  <defs>
+    <linearGradient id="pencilBody" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#FCD77D" />
+      <stop offset="100%" stop-color="#E9A941" />
+    </linearGradient>
+    <linearGradient id="pencilMetal" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0%" stop-color="#F2F3F4" />
+      <stop offset="100%" stop-color="#B3B8BF" />
+    </linearGradient>
+    <linearGradient id="pencilWood" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#E2B27F" />
+      <stop offset="100%" stop-color="#D69F5B" />
+    </linearGradient>
+    <filter id="pencilShadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#000" flood-opacity="0.22" />
+    </filter>
+  </defs>
+
+  <g filter="url(#pencilShadow)">
+    <!-- Body -->
+    <path d="M18 92 L64 14 L102 52 L56 130 Z" fill="url(#pencilBody)" stroke="#C0714F" stroke-width="3" />
+
+    <!-- Wood tip -->
+    <path d="M18 92 L28 102 L70 58 L60 48 Z" fill="url(#pencilWood)" />
+
+    <!-- Lead -->
+    <path d="M28 102 L36 110 L64 82 L56 74 Z" fill="#4D342D" />
+
+    <!-- Metal ferrule -->
+    <path d="M80 30 L104 52 L96 62 L72 40 Z" fill="url(#pencilMetal)" stroke="#A6AEB6" stroke-width="1" />
+    <rect x="76" y="34" width="18" height="22" rx="4" fill="url(#pencilMetal)" />
+    <path d="M76 42 L94 42" stroke="#A6AEB6" stroke-width="1.5" />
+
+    <!-- Eraser -->
+    <rect x="76" y="24" width="18" height="12" rx="3" fill="#E7B5AA" stroke="#C17C6A" stroke-width="1" />
+    <path d="M76 27 L94 27" stroke="#C17C6A" stroke-width="1" opacity="0.6" />
+  </g>
+</svg>

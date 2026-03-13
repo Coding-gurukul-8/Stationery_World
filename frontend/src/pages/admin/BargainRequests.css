@@ -1,0 +1,71 @@
+/* Bargain Requests Admin Page */
+.bargain-requests-container {
+  width: 100%; max-width: 1400px; margin: 0 auto;
+  font-family: var(--font-body); color: var(--text-primary);
+}
+
+.bargain-requests-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 18px; padding-bottom: 12px; border-bottom: 1px solid var(--border);
+}
+.bargain-requests-header h3 { margin: 0; font-family: var(--font-serif); font-weight: 400; }
+.bargain-requests-controls { display: flex; gap: 12px; align-items: center; }
+.bargain-requests-controls select {
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  padding: 8px 10px; background: var(--surface);
+}
+
+.requests-list { display: flex; flex-direction: column; gap: 14px; }
+.bargain-request-row {
+  display: flex; justify-content: space-between; gap: 14px;
+  padding: 16px 18px; border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--surface); align-items: flex-start;
+}
+.bargain-request-info { flex: 1; }
+.bargain-request-meta { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; font-size: 12px; color: var(--text-muted); }
+.request-id { font-weight: 700; }
+.request-status { padding: 4px 10px; border-radius: var(--radius-full); font-size: 11px; font-weight: 700; text-transform: uppercase; }
+.request-status.pending { background: rgba(59,130,246,0.12); color: var(--blue); border: 1px solid rgba(59,130,246,0.2); }
+.request-status.approved { background: rgba(34,197,94,0.12); color: var(--green); border: 1px solid rgba(34,197,94,0.2); }
+.request-status.denied { background: rgba(239,68,68,0.12); color: var(--red); border: 1px solid rgba(239,68,68,0.2); }
+.request-date { color: var(--text-faint); }
+.request-details { margin-top: 6px; font-size: 13px; }
+.request-note { margin-top: 8px; padding: 10px 12px; background: var(--amber-bg); border-radius: var(--radius-md); font-size: 12px; color: var(--text-secondary); }
+
+.bargain-request-actions { display: flex; gap: 10px; }
+.btn-approve, .btn-deny {
+  padding: 10px 14px; border-radius: var(--radius-md);
+  border: 1.5px solid transparent; font-weight: 700; cursor: pointer;
+  transition: all var(--tr);
+}
+.btn-approve { background: var(--green); color: #fff; border-color: rgba(34,197,94,0.7); }
+.btn-approve:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(34,197,94,0.35); }
+.btn-deny { background: var(--red); color: #fff; border-color: rgba(239,68,68,0.7); }
+.btn-deny:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(239,68,68,0.32); }
+.btn-approve:disabled, .btn-deny:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.loading-spinner { text-align: center; padding: 40px; }
+.loading-spinner .spinner { width: 36px; height: 36px; border: 4px solid rgba(0,0,0,0.1); border-top-color: var(--gold); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 12px; }
+
+.error-message { background: var(--red-bg); border: 1px solid rgba(192,57,43,0.2); border-left: 3px solid var(--red); color: var(--red); padding: 18px; border-radius: var(--radius-md); text-align: center; }
+.error-message button { margin-top: 10px; background: var(--red); color: white; border: none; padding: 10px 18px; border-radius: var(--radius-md); cursor: pointer; }
+
+.grant-permission-card {
+  margin-top: 24px; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface);
+}
+.grant-permission-card h4 { margin: 0 0 10px; }
+.grant-permission-card .hint { margin: 0 0 14px; color: var(--text-muted); font-size: 13px; }
+.grant-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.grant-grid input { padding: 10px 12px; border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--bg-subtle); }
+
+.btn-grant {
+  background: var(--blue); color: white; border: none; padding: 12px 16px; border-radius: var(--radius-md); cursor: pointer;
+  font-weight: 700; transition: transform 0.2s ease;
+}
+.btn-grant:hover:not(:disabled) { transform: translateY(-1px); }
+.btn-grant:disabled { opacity: 0.6; cursor: not-allowed; }
+
+@media (max-width: 768px) {
+  .bargain-request-row { flex-direction: column; }
+  .bargain-request-actions { width: 100%; justify-content: flex-start; }
+}

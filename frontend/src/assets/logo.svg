@@ -1,0 +1,31 @@
+<svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" fill="none">
+  <defs>
+    <linearGradient id="logoFill" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#C9A84C" />
+      <stop offset="100%" stop-color="#4D7260" />
+    </linearGradient>
+    <filter id="logoShadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#000" flood-opacity="0.22" />
+    </filter>
+  </defs>
+
+  <g filter="url(#logoShadow)">
+    <rect x="18" y="18" width="84" height="84" rx="20" fill="url(#logoFill)" />
+
+    <!-- Book shape -->
+    <path d="M40 36 L80 36 L80 72 L40 72 Z" fill="rgba(255,255,255,0.85)" />
+    <path d="M44 40 L76 40 L76 68 L44 68 Z" fill="rgba(77,114,96,0.18)" />
+    <path d="M52 42 L68 42 L68 62 L52 62 Z" fill="rgba(255,255,255,0.9)" />
+    <path d="M52 50 L68 50" stroke="rgba(77,114,96,0.35)" stroke-width="1.5" />
+    <path d="M52 56 L68 56" stroke="rgba(77,114,96,0.35)" stroke-width="1.5" />
+
+    <!-- Pencil along diagonal -->
+    <path d="M48 78 L84 42 L90 48 L54 84 Z" fill="#E9A941" stroke="#C0714F" stroke-width="2" />
+    <path d="M84 42 L90 48 L86 52 L80 46 Z" fill="#F2F3F4" />
+    <path d="M84 42 L76 50 L72 46 L80 38 Z" fill="#4D342D" />
+
+    <!-- Lettermark S/W -->
+    <path d="M44 88 C52 78 68 78 72 88 C76 98 64 102 56 96" stroke="#FFFFFF" stroke-width="4" fill="none" stroke-linecap="round" />
+    <path d="M60 92 L74 92" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round" />
+  </g>
+</svg>
