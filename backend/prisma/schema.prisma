@@ -8,8 +8,7 @@
 // =====================================================
 
 generator client {
-  provider      = "prisma-client-js"
-  binaryTargets = ["native", "debian-openssl-3.0.x"]
+  provider = "prisma-client-js"
 }
 
 datasource db {
@@ -54,6 +53,10 @@ model User {
   otps                 OTP[]
   createdProducts      Product[]             @relation("ProductCreatedBy")
   productNotifications ProductNotification[]
+  bargainPermissions   BargainPermission[]   @relation("UserBargainPermissions")
+  grantedBargains      BargainPermission[]   @relation("GrantedBargains")
+  bargainRequests      BargainRequest[]      @relation("UserBargainRequests")
+  bargainReviewedRequests BargainRequest[]   @relation("BargainRequestReview")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -117,13 +120,15 @@ model Product {
   // Relations
   images          ProductImage[]
   inventoryLogs   InventoryLog[]
-  bargainConfig   BargainConfig?
-  orderItems      OrderItem[]
-  wishlists       Wishlist[]
-  bargainAttempts BargainAttempt[]
-  cartItems       Cart[]
-  notifications   ProductNotification[]
-  bulkDiscounts   BulkDiscount[]
+  bargainConfig     BargainConfig?
+  bargainPermissions BargainPermission[]  @relation("ProductBargainPermissions")
+  bargainRequests   BargainRequest[]     @relation("ProductBargainRequests")
+  orderItems        OrderItem[]
+  wishlists         Wishlist[]
+  bargainAttempts   BargainAttempt[]
+  cartItems         Cart[]
+  notifications     ProductNotification[]
+  bulkDiscounts     BulkDiscount[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -217,9 +222,9 @@ model BargainConfig {
 // Permission table allowing admins to grant special bargain access to individual users
 model BargainPermission {
   id          Int      @id @default(autoincrement())
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User     @relation("UserBargainPermissions", fields: [userId], references: [id], onDelete: Cascade)
   userId      Int
-  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product     Product  @relation("ProductBargainPermissions", fields: [productId], references: [id], onDelete: Cascade)
   productId   Int
   grantedBy   User?    @relation("GrantedBargains", fields: [grantedById], references: [id])
   grantedById Int?
@@ -234,9 +239,9 @@ model BargainPermission {
 
 model BargainRequest {
   id          Int      @id @default(autoincrement())
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User     @relation("UserBargainRequests", fields: [userId], references: [id], onDelete: Cascade)
   userId      Int
-  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product     Product  @relation("ProductBargainRequests", fields: [productId], references: [id], onDelete: Cascade)
   productId   Int
 
   status      BargainRequestStatus  @default(PENDING)
