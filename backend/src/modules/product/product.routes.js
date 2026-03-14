@@ -6,6 +6,7 @@ const {
   getAllProducts,
   getProductById,
   getProductsByCategory,
+  getRecommendedProducts,
   createProduct,
   updateProduct,
   deleteProduct,
@@ -74,6 +75,7 @@ router.get('/admin/low-stock', authMiddleware, adminMiddleware, getLowStockProdu
 
 // Public routes
 router.get('/', getAllProducts);
+router.get('/recommended', authMiddleware, getRecommendedProducts);
 router.get('/category/:category', getProductsByCategory);
 
 // Admin-only routes

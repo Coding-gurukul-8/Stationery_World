@@ -108,6 +108,7 @@ app.get('/', (req, res) => {
       
       products: {
         getAllProducts: 'GET /api/products',
+        getRecommendedProducts: 'GET /api/products/recommended (Protected)',
         getProductById: 'GET /api/products/:id',
         getProductsByCategory: 'GET /api/products/category/:category',
         createProduct: 'POST /api/products (Admin Only)',

@@ -197,6 +197,38 @@ const getProductsByCategory = async (req, res) => {
   }
 };
 
+const { getRecommendedProductsForUser } = require('./recommendations.service');
+
+// Get recommended products (based on wishlist/cart/order history)
+const getRecommendedProducts = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    console.log('Get recommended products request for user:', userId);
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required.'
+      });
+    }
+
+    const limit = parseInt(req.query.limit) || 20;
+    const recommendedProducts = await getRecommendedProductsForUser(userId, limit);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Recommended products retrieved successfully.',
+      data: recommendedProducts
+    });
+  } catch (error) {
+    console.error('Get recommended products error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error while fetching recommended products.'
+    });
+  }
+};
+
 // Create product (Admin only)
 const createProduct = async (req, res) => {
   try {
@@ -875,6 +907,7 @@ module.exports = {
   getAllProducts,
   getProductById,
   getProductsByCategory,
+  getRecommendedProducts,
   createProduct,
   updateProduct,
   deleteProduct,

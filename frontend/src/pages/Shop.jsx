@@ -104,17 +104,40 @@ export default function Shop() {
   const fetchProducts = async () => {
     try {
       setLoading(true);
-      const response = await fetch('http://localhost:3000/api/products');
+      const token = localStorage.getItem('token');
+      const url = token
+        ? 'http://localhost:3000/api/products/recommended?limit=20'
+        : 'http://localhost:3000/api/products';
+
+      const response = await fetch(url, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
       const result = await response.json();
 
       if (!result.success) {
+        // If recommendations fail (invalid/expired token), fall back to public products
+        if (token) {
+          const fallbackRes = await fetch('http://localhost:3000/api/products');
+          const fallbackResult = await fallbackRes.json();
+
+          if (!fallbackResult.success) {
+            throw new Error(fallbackResult.message);
+          }
+
+          const activeProducts = (fallbackResult.data || []).filter(p => p.isActive);
+          const shuffled = activeProducts.sort(() => Math.random() - 0.5);
+          setProducts(shuffled.slice(0, 20));
+          setError(null);
+          return;
+        }
+
         throw new Error(result.message);
       }
 
       const activeProducts = (result.data || []).filter(p => p.isActive);
-      // show a randomized subset of 20 products each time
-      const shuffled = activeProducts.sort(() => Math.random() - 0.5);
-      setProducts(shuffled.slice(0, 20));
+      // show a randomized subset of 20 products each time when not using recommended endpoint
+      const finalList = token ? activeProducts : activeProducts.sort(() => Math.random() - 0.5);
+      setProducts(finalList.slice(0, 20));
       setError(null);
     } catch (err) {
       console.error('Error fetching products:', err);

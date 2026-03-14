@@ -622,16 +622,95 @@
 .restock-box {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-left: 3px solid var(--gold);
+  border-left: 4px solid var(--gold);
   border-radius: var(--radius-lg);
   padding: 20px;
   margin-top: 16px;
-  transition: background var(--tr-slow);
+  transition: background var(--tr-slow), transform var(--tr);
+  max-width: 420px;
+  width: 100%;
+  box-shadow: var(--shadow-sm);
+}
+.restock-box:hover {
+  transform: translateY(-2px);
 }
 .restock-box h4 {
   font-family: var(--font-serif);
-  font-size: 16px; font-weight: 400;
+  font-size: 18px; font-weight: 500;
   color: var(--text-primary); margin: 0 0 12px;
+}
+.restock-box .restock-meta {
+  font-size: 14px; color: var(--text-secondary);
+  margin-bottom: 12px;
+}
+.restock-box .restock-meta .muted {
+  font-size: 12px; color: var(--text-muted);
+}
+
+/* Form inside restock box */
+.restock-box form {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.restock-box label {
+  font-size: 12px; font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.restock-box input[type="number"],
+.restock-box input[type="text"],
+.restock-box input[type="file"] {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1.5px solid var(--border);
+  background: var(--bg-muted);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color var(--tr), box-shadow var(--tr);
+}
+
+.restock-box input:focus {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px var(--gold-glow);
+}
+
+.restock-box .restock-info {
+  background: var(--bg-subtle);
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--text-primary);
+  margin-top: 10px;
+}
+
+.restock-box .restock-info strong {
+  color: var(--text-primary);
+}
+
+.restock-product-title {
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.restock-stock {
+  font-weight: 800;
+  font-size: 18px;
+}
+
+.restock-stock.ok { color: var(--green); }
+.restock-stock.low { color: var(--red); }
+
+/* Ensure image preview area matches restock spacing */
+.restock-box .image-preview {
+  margin-top: 8px;
 }
 
 /* ── Add/Edit product form ──────────────────────────────────── */

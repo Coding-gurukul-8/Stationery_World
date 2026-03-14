@@ -890,11 +890,11 @@ export default function Inventory() {
               {mode === 'restock' && selected ? (
                 <div className="restock-box">
                   <h4>📦 Restock</h4>
-                  <div style={{ fontWeight: 700, fontSize: 15, color: '#0f172a', marginBottom: 2 }}>{selected.name}</div>
-                  <div className="muted">UID: {selected.uid}</div>
-                  <div style={{ marginTop: 8, padding: '10px 12px', background: '#f8fafc', borderRadius: 8, fontSize: 13 }}>
+                  <div className="restock-product-title">{selected.name}</div>
+                  <div className="restock-meta muted">UID: {selected.uid}</div>
+                  <div className="restock-info">
                     <strong>Current stock:</strong>{' '}
-                    <span style={{ fontWeight: 800, color: selected.totalStock <= (selected.lowStockThreshold || 0) ? '#dc2626' : '#16a34a', fontSize: 18 }}>
+                    <span className={selected.totalStock <= (selected.lowStockThreshold || 0) ? 'restock-stock low' : 'restock-stock ok'}>
                       {selected.totalStock}
                     </span>
                   </div>
