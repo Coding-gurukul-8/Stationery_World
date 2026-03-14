@@ -1,12 +1,57 @@
-import { useMemo } from 'react';
+import { useMemo, useRef, useEffect, useState } from 'react';
 import './CartoonMascot.css';
 
 /**
  * Cartoon Mascot component for a friendly stationery-themed animation.
  * Used on admin + customer screens as a subtle floating mascot.
+ *
+ * Features:
+ * - Draggable / moveable
+ * - Multiple animated variants (pencil, ruler, book, paintbrush)
  */
 export default function CartoonMascot({ position = 'bottom-right' }) {
   // position accepts: 'top-right', 'bottom-right', 'top-left', 'bottom-left'
+  // We'll compute an initial x/y offset and then allow the user to drag the mascot anywhere.
+  const wrapperRef = useRef(null);
+  const [dragging, setDragging] = useState(false);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const [pos, setPos] = useState(null);
+
+  const getInitialPos = () => {
+    const padding = 18;
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    const size = 120;
+
+    const [vert, horiz] = position.split('-');
+    const x = horiz === 'right' ? width - size - padding : padding;
+    const y = vert === 'bottom' ? height - size - padding : padding;
+
+    return { x, y };
+  };
+
+  useEffect(() => {
+    if (!pos) {
+      setPos(getInitialPos());
+    }
+
+    const handleResize = () => {
+      // Keep mascot on-screen after resizing (if it was still close to edges)
+      setPos((current) => {
+        if (!current) return current;
+        const maxX = window.innerWidth - 140;
+        const maxY = window.innerHeight - 140;
+        return {
+          x: Math.min(Math.max(current.x, 12), maxX),
+          y: Math.min(Math.max(current.y, 12), maxY)
+        };
+      });
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [pos, position]);
+
   const variant = useMemo(() => {
     const variants = ['pencil', 'ruler', 'book', 'paintbrush'];
     return variants[Math.floor(Date.now() / 5000) % variants.length];
@@ -130,8 +175,51 @@ export default function CartoonMascot({ position = 'bottom-right' }) {
     }
   }, [variant]);
 
+  const handlePointerDown = (event) => {
+    if (!wrapperRef.current) return;
+    const rect = wrapperRef.current.getBoundingClientRect();
+    setDragging(true);
+    setDragOffset({
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top
+    });
+    wrapperRef.current.setPointerCapture(event.pointerId);
+  };
+
+  const handlePointerMove = (event) => {
+    if (!dragging) return;
+    setPos({
+      x: event.clientX - dragOffset.x,
+      y: event.clientY - dragOffset.y
+    });
+  };
+
+  const handlePointerUp = (event) => {
+    if (!dragging) return;
+    setDragging(false);
+    if (wrapperRef.current) {
+      wrapperRef.current.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  const wrapperStyle = pos
+    ? {
+        left: pos.x,
+        top: pos.y
+      }
+    : undefined;
+
   return (
-    <div className={`mascot-wrapper mascot-${position}`} aria-hidden="true">
+    <div
+      ref={wrapperRef}
+      className={`mascot-wrapper ${dragging ? 'grabbing' : ''} ${pos ? '' : `mascot-${position}`}`}
+      aria-hidden="true"
+      style={wrapperStyle}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerLeave={handlePointerUp}
+    >
       <div className="mascot-floating" data-variant={variant}>
         {Svg}
       </div>

@@ -1,9 +1,14 @@
 .mascot-wrapper {
   position: fixed;
-  pointer-events: none;
+  pointer-events: auto;
   z-index: 80;
   opacity: 0.92;
   transform: translateZ(0);
+  cursor: grab;
+}
+
+.mascot-wrapper.grabbing {
+  cursor: grabbing;
 }
 
 .mascot-top-right {
@@ -94,3 +99,4 @@
   45% { transform: translateY(-4px) rotate(2deg); }
   65% { transform: translateY(-6px) rotate(-2deg); }
 }
+

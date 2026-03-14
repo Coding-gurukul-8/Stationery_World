@@ -20,7 +20,6 @@ const productInclude = {
 // Get all products with filters (Public)
 const getAllProducts = async (req, res) => {
   try {
-    console.log('Get all products request received');
 
     const { 
       isActive, 
@@ -94,10 +93,7 @@ const getAllProducts = async (req, res) => {
     let filteredProducts = products;
     if (lowStock === 'true') {
       filteredProducts = products.filter(p => p.totalStock <= p.lowStockThreshold);
-      console.log('Low stock filter applied:', filteredProducts.length);
     }
-
-    console.log(`Found ${filteredProducts.length} products`);
 
     return res.status(200).json({
       success: true,
@@ -118,7 +114,6 @@ const getAllProducts = async (req, res) => {
 const getProductById = async (req, res) => {
   try {
     const { id } = req.params;
-    console.log('Get product by ID request:', id);
 
     const productId = parseInt(id);
     if (isNaN(productId)) {
@@ -139,8 +134,6 @@ const getProductById = async (req, res) => {
       });
     }
 
-    console.log('Product found:', product.id);
-
     return res.status(200).json({
       success: true,
       message: 'Product retrieved successfully.',
@@ -159,7 +152,6 @@ const getProductById = async (req, res) => {
 const getProductsByCategory = async (req, res) => {
   try {
     const { category } = req.params;
-    console.log('Get products by category:', category);
 
     const upperCategory = category.toUpperCase();
     
@@ -203,7 +195,6 @@ const { getRecommendedProductsForUser } = require('./recommendations.service');
 const getRecommendedProducts = async (req, res) => {
   try {
     const userId = req.user?.id;
-    console.log('Get recommended products request for user:', userId);
 
     if (!userId) {
       return res.status(401).json({
@@ -716,7 +707,7 @@ const restockProduct = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid product ID.' });
     }
 
-    const { quantityAdded, costPrice, baseSellingPrice, bargainable, images, note } = req.body;
+    const { quantityAdded, costPrice, baseSellingPrice, bargainable, images, note, investmentSource } = req.body;
     const qty = parseInt(quantityAdded || 0);
     if (isNaN(qty) || qty <= 0) {
       return res.status(400).json({ success: false, message: 'quantityAdded must be a positive integer.' });
@@ -754,6 +745,20 @@ const restockProduct = async (req, res) => {
           adminId: req.user?.id || null
         }
       });
+
+      // If restocking from profit, deduct from profit ledger (cash reserve)
+      if (investmentSource === 'PROFIT') {
+        const costPerUnit = parseFloat(costPrice ?? product.costPrice);
+        const totalCost = costPerUnit * qty;
+        await prismaTx.profitLedger.create({
+          data: {
+            adminId: req.user?.id || null,
+            amount: -Math.abs(totalCost),
+            note: `Reinvested from profit to restock ${qty} unit(s) of ${product.name} (${product.id}) at ₹${costPerUnit.toFixed(2)} each`,
+            orderId: null
+          }
+        });
+      }
 
       // Add images if provided (array of URLs)
       if (Array.isArray(images) && images.length > 0) {

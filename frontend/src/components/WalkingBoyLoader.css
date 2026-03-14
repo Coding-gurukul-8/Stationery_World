@@ -1,0 +1,500 @@
+/* ═══════════════════════════════════════════
+   WALKING BOY LOADER
+   Pixel-art style boy with book, dark beanie,
+   brown skin, grey hoodie, dark jeans
+   ═══════════════════════════════════════════ */
+
+.walking-boy-loader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  pointer-events: none;
+  user-select: none;
+}
+
+.walking-boy-loader .loader-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--text-faint, #8a7862);
+  animation: labelFade 1.4s ease-in-out infinite;
+}
+
+@keyframes labelFade {
+  0%, 100% { opacity: 0.5; }
+  50%       { opacity: 1; }
+}
+
+/* ── Scene ── */
+.boy-scene {
+  position: relative;
+  width: 140px;
+  height: 120px;
+}
+
+/* Ground line */
+.boy-scene::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg,
+    transparent,
+    var(--border, rgba(61,44,30,.18)) 20%,
+    var(--border, rgba(61,44,30,.18)) 80%,
+    transparent
+  );
+  border-radius: 1px;
+}
+
+/* ── SVG container — body bounce ── */
+.boy-body {
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 80px;
+  height: 116px;
+  animation: bodyBounce 0.7s ease-in-out infinite;
+  transform-origin: bottom center;
+}
+
+@keyframes bodyBounce {
+  0%, 100% { transform: translateX(-50%) translateY(0px); }
+  50%       { transform: translateX(-50%) translateY(-3px); }
+}
+
+/* Shadow */
+.boy-shadow {
+  position: absolute;
+  bottom: 1px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 48px;
+  height: 7px;
+  background: radial-gradient(ellipse, rgba(0,0,0,0.22) 0%, transparent 70%);
+  border-radius: 50%;
+  animation: shadowPulse 0.7s ease-in-out infinite;
+}
+
+@keyframes shadowPulse {
+  0%, 100% { transform: translateX(-50%) scaleX(1);   opacity: 0.8; }
+  50%       { transform: translateX(-50%) scaleX(0.85); opacity: 0.5; }
+}
+
+/* ── Legs ── */
+.boy-leg-left,
+.boy-leg-right {
+  position: absolute;
+  bottom: 8px;
+  width: 11px;
+  height: 34px;
+  border-radius: 5px 5px 4px 4px;
+  transform-origin: top center;
+}
+
+.boy-leg-left {
+  left: 26px;
+  background: #1e2535;
+  animation: legLeft 0.7s ease-in-out infinite;
+}
+
+.boy-leg-right {
+  left: 39px;
+  background: #252e42;
+  animation: legRight 0.7s ease-in-out infinite;
+}
+
+/* Shoes */
+.boy-leg-left::after,
+.boy-leg-right::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: -2px;
+  width: 15px;
+  height: 7px;
+  background: #111;
+  border-radius: 3px 5px 3px 2px;
+}
+
+@keyframes legLeft {
+  0%   { transform: rotate(-18deg); }
+  50%  { transform: rotate(20deg);  }
+  100% { transform: rotate(-18deg); }
+}
+
+@keyframes legRight {
+  0%   { transform: rotate(18deg);  }
+  50%  { transform: rotate(-20deg); }
+  100% { transform: rotate(18deg);  }
+}
+
+/* ── Arms ── */
+.boy-arm-left,
+.boy-arm-right {
+  position: absolute;
+  top: 38px;
+  width: 9px;
+  height: 26px;
+  border-radius: 5px;
+  transform-origin: top center;
+}
+
+.boy-arm-left {
+  left: 16px;
+  background: #7a4f2e;
+  animation: armLeft 0.7s ease-in-out infinite;
+}
+
+/* Right arm holds the book — less swing */
+.boy-arm-right {
+  left: 52px;
+  background: #7a4f2e;
+  animation: armRight 0.7s ease-in-out infinite;
+}
+
+@keyframes armLeft {
+  0%   { transform: rotate(20deg);  }
+  50%  { transform: rotate(-22deg); }
+  100% { transform: rotate(20deg);  }
+}
+
+@keyframes armRight {
+  0%   { transform: rotate(-10deg); }
+  50%  { transform: rotate(8deg);   }
+  100% { transform: rotate(-10deg); }
+}
+
+/* ── Book (held in right arm) ── */
+.boy-book {
+  position: absolute;
+  top: 50px;
+  left: 50px;
+  width: 18px;
+  height: 22px;
+  background: linear-gradient(160deg, #f7e8c8 0%, #d4a96a 100%);
+  border: 1.5px solid #8c6235;
+  border-radius: 2px 4px 4px 2px;
+  animation: bookBob 0.7s ease-in-out infinite;
+  transform-origin: top left;
+  box-shadow: 2px 2px 0 rgba(0,0,0,0.18);
+}
+
+/* Book spine */
+.boy-book::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: #8c6235;
+  border-radius: 2px 0 0 2px;
+}
+
+/* Book lines */
+.boy-book::after {
+  content: '';
+  position: absolute;
+  left: 6px; top: 4px; right: 2px;
+  height: 2px;
+  background: rgba(100,60,20,0.35);
+  box-shadow: 0 4px 0 rgba(100,60,20,0.25), 0 8px 0 rgba(100,60,20,0.20), 0 12px 0 rgba(100,60,20,0.15);
+}
+
+@keyframes bookBob {
+  0%   { transform: rotate(-10deg) translateY(0px);  }
+  50%  { transform: rotate(-6deg)  translateY(-2px); }
+  100% { transform: rotate(-10deg) translateY(0px);  }
+}
+
+/* ── Torso / Hoodie ── */
+.boy-torso {
+  position: absolute;
+  top: 34px;
+  left: 19px;
+  width: 38px;
+  height: 42px;
+  background: linear-gradient(180deg, #5a5a5a 0%, #404040 100%);
+  border-radius: 10px 10px 6px 6px;
+  border: 1.5px solid #2a2a2a;
+}
+
+/* Hoodie pocket */
+.boy-torso::after {
+  content: '';
+  position: absolute;
+  bottom: 6px; left: 50%;
+  transform: translateX(-50%);
+  width: 16px; height: 8px;
+  background: rgba(0,0,0,0.18);
+  border-radius: 4px 4px 0 0;
+  border: 1px solid rgba(0,0,0,0.2);
+}
+
+/* ── Neck ── */
+.boy-neck {
+  position: absolute;
+  top: 27px;
+  left: 33px;
+  width: 10px;
+  height: 10px;
+  background: #8a5530;
+  border-radius: 3px;
+}
+
+/* ── Head ── */
+.boy-head {
+  position: absolute;
+  top: 4px;
+  left: 25px;
+  width: 26px;
+  height: 27px;
+  background: #a0653a;
+  border-radius: 50% 50% 45% 45%;
+  border: 1.5px solid #7a4520;
+  animation: headSway 0.7s ease-in-out infinite;
+  transform-origin: bottom center;
+}
+
+@keyframes headSway {
+  0%   { transform: rotate(-2deg); }
+  50%  { transform: rotate(2deg);  }
+  100% { transform: rotate(-2deg); }
+}
+
+/* Face — eyes */
+.boy-eye-left,
+.boy-eye-right {
+  position: absolute;
+  top: 10px;
+  width: 3px;
+  height: 3px;
+  background: #1a1612;
+  border-radius: 50%;
+  animation: blink 3.5s ease-in-out infinite;
+}
+
+.boy-eye-left  { left: 6px;  }
+.boy-eye-right { left: 15px; }
+
+@keyframes blink {
+  0%, 88%, 100% { transform: scaleY(1);    }
+  92%, 96%      { transform: scaleY(0.1);  }
+}
+
+/* Mouth — small smile */
+.boy-mouth {
+  position: absolute;
+  top: 18px;
+  left: 7px;
+  width: 10px;
+  height: 4px;
+  border-bottom: 2px solid #5a2e10;
+  border-radius: 0 0 6px 6px;
+}
+
+/* Ear */
+.boy-ear {
+  position: absolute;
+  top: 10px;
+  left: -4px;
+  width: 6px;
+  height: 8px;
+  background: #a0653a;
+  border-radius: 50%;
+  border: 1px solid #7a4520;
+}
+
+/* ── Beanie ── */
+.boy-beanie {
+  position: absolute;
+  top: -4px;
+  left: 24px;
+  width: 28px;
+  height: 20px;
+  background: #1a1a1a;
+  border-radius: 50% 50% 10% 10% / 60% 60% 20% 20%;
+  border: 1.5px solid #333;
+  overflow: visible;
+}
+
+/* Beanie brim */
+.boy-beanie::after {
+  content: '';
+  position: absolute;
+  bottom: -3px; left: -3px; right: -3px;
+  height: 7px;
+  background: #111;
+  border-radius: 3px;
+}
+
+/* Devil horns */
+.boy-horn-left,
+.boy-horn-right {
+  position: absolute;
+  top: -7px;
+  width: 5px;
+  height: 9px;
+  background: #c0392b;
+  border-radius: 50% 50% 0 0;
+  border: 1px solid #922b21;
+}
+
+.boy-horn-left  { left: 5px;  transform: rotate(-12deg); }
+.boy-horn-right { right: 4px; transform: rotate(12deg);  }
+
+/* Cross on beanie */
+.boy-beanie-cross {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 7px;
+  height: 7px;
+}
+.boy-beanie-cross::before {
+  content: '';
+  position: absolute;
+  top: 50%; left: 0; right: 0;
+  height: 1.5px;
+  background: #fff;
+  transform: translateY(-50%);
+}
+.boy-beanie-cross::after {
+  content: '';
+  position: absolute;
+  left: 50%; top: 0; bottom: 0;
+  width: 1.5px;
+  background: #fff;
+  transform: translateX(-50%);
+}
+
+/* Hair peeking from under beanie */
+.boy-hair {
+  position: absolute;
+  top: 14px;
+  left: 24px;
+  width: 28px;
+  height: 10px;
+  overflow: hidden;
+}
+
+.boy-hair::before {
+  content: '';
+  position: absolute;
+  bottom: 0; left: -2px; right: -2px;
+  height: 12px;
+  background: #3d2210;
+  border-radius: 50%;
+}
+
+/* ═══════════════════════════════════
+   WalkingBoyLoader.css
+   Pixel-art boy: beanie + devil horns,
+   brown skin, grey hoodie, dark jeans,
+   book in hand. Canvas-driven.
+   ═══════════════════════════════════ */
+
+.walking-boy-loader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  pointer-events: none;
+  user-select: none;
+}
+
+.walking-boy-loader canvas {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  display: block;
+}
+
+.walking-boy-loader .boy-label {
+  font-family: 'DM Mono', 'Courier New', monospace;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-faint, #8a7862);
+  animation: boyLabelPulse 1.4s ease-in-out infinite;
+}
+
+@keyframes boyLabelPulse {
+  0%, 100% { opacity: 0.45; }
+  50%       { opacity: 1;    }
+}
+
+.walking-boy-loader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  pointer-events: none;
+  user-select: none;
+}
+
+.boy-scene {
+  width: 100px;
+  height: 190px;
+  position: relative;
+}
+
+.boy-scene canvas {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.walking-boy-loader .loader-label {
+  font-family: 'DM Mono', 'Courier New', monospace;
+  font-size: 11px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--text-faint, #8a7862);
+  animation: wbLabelPulse 1.4s ease-in-out infinite;
+}
+
+@keyframes wbLabelPulse {
+  0%, 100% { opacity: 0.45; }
+  50%       { opacity: 1; }
+}
+/* ═══════════════════════════════════
+   WalkingBoyLoader — pixel-art boy
+   ═══════════════════════════════════ */
+
+.walking-boy-loader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  pointer-events: none;
+  user-select: none;
+}
+
+.boy-canvas {
+  /* Scale up 2× so each "pixel" is crisp and large */
+  width: 132px;
+  height: 240px;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  display: block;
+}
+
+.boy-label {
+  font-family: 'DM Mono', 'Courier New', monospace;
+  font-size: 11px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--text-faint, #8a7862);
+  animation: boyLabelPulse 1.4s ease-in-out infinite;
+}
+
+@keyframes boyLabelPulse {
+  0%, 100% { opacity: 0.45; }
+  50%       { opacity: 1;    }
+}

@@ -16,6 +16,18 @@ async function main() {
     console.log('Admin already exists:', adminEmail);
   }
 
+  // Create a second admin for the real account (if useful)
+  const realAdminEmail = 'priyanshu@stationery.com';
+  const realAdminPassword = 'password123';
+  let realAdmin = await prisma.user.findUnique({ where: { email: realAdminEmail } });
+  if (!realAdmin) {
+    const hash = await bcrypt.hash(realAdminPassword, 10);
+    realAdmin = await prisma.user.create({ data: { name: 'Priyanshu Kumar Gupta', email: realAdminEmail, passwordHash: hash, role: 'ADMIN' } });
+    console.log('Created real admin:', realAdminEmail);
+  } else {
+    console.log('Real admin already exists:', realAdminEmail);
+  }
+
   // Create a customer user
   const customerEmail = 'customer@example.com';
   const customerPassword = 'password123';
@@ -68,10 +80,13 @@ async function main() {
   const createdProducts = [];
   for (const p of productsData) {
     // Find by name to be compatible with current Prisma client/version
-    let prod = await prisma.product.findFirst({ where: { name: p.name } });
+    // Ensure created products are linked to the real admin user
+    let prod = await prisma.product.findUnique({ where: { uid: p.uid } });
+
     if (!prod) {
       prod = await prisma.product.create({
         data: {
+          uid: p.uid,
           name: p.name,
           description: p.description,
           category: p.category,
@@ -82,12 +97,21 @@ async function main() {
           totalStock: p.totalStock,
           lowStockThreshold: p.lowStockThreshold || 10,
           isActive: true,
+          createdById: realAdmin.id,
           images: { create: p.images }
         },
         include: { images: true }
       });
       console.log('Created product:', p.name);
     } else {
+      // Ensure the product is attributed to the real admin for reporting
+      if (!prod.createdById) {
+        prod = await prisma.product.update({
+          where: { id: prod.id },
+          data: { createdById: realAdmin.id }
+        });
+        console.log('Updated product owner for:', p.name);
+      }
       console.log('Product exists:', p.name);
     }
     createdProducts.push(prod);

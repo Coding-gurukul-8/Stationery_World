@@ -479,7 +479,6 @@ const getUserOrders = async (req, res) => {
     const userId = req.user.id;
     const { status } = req.query;
 
-    console.log('Get orders request for user:', userId);
 
     const where = { userId };
     if (status) {
@@ -534,7 +533,6 @@ const getOrderById = async (req, res) => {
     const userId = req.user.id;
     const isAdmin = req.user.role === 'ADMIN';
 
-    console.log('Get order by ID:', id);
 
     const order = await prisma.order.findUnique({
       where: { id: parseInt(id) },
@@ -723,8 +721,6 @@ const getAllOrders = async (req, res) => {
   try {
     const { status, userId, startDate, endDate, type } = req.query;
     const loggedInUserId = req.user.id;
-
-    console.log('Get all orders request (Admin) | type:', type, '| loggedInUser:', loggedInUserId);
 
     const where = {};
 

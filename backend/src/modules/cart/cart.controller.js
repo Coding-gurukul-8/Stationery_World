@@ -4,7 +4,6 @@ const prisma = require('../../../prisma/client');
 const getCart = async (req, res) => {
   try {
     const userId = req.user.id;
-    console.log('Get cart request for user:', userId);
 
     const cartItems = await prisma.cart.findMany({
       where: { userId },

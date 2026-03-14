@@ -394,7 +394,8 @@ export default function Inventory() {
     bargainTiers: [{ price: '' }, { price: '' }, { price: '' }],
     // bulk discounts array
     bulkDiscounts: [{ minQty: '', discount: '', unit: 'RUPEES' }],
-    quantityAdded: 0, lowStockThreshold: 10
+    quantityAdded: 0, lowStockThreshold: 10,
+    investmentSource: 'PROFIT' // PROFIT or NEW
   });
   const [selectedFiles,  setSelectedFiles]  = useState([]);
   const [filePreviews,   setFilePreviews]   = useState([]);
@@ -478,7 +479,8 @@ export default function Inventory() {
         { price: full.bargainConfig?.tier3Price || '' }
       ],
       bulkDiscounts: (full.bulkDiscounts || []).map(d => ({ minQty: d.minQty, discount: d.discount, unit: d.unit })) || [{ minQty: '', discount: '', unit: 'RUPEES' }],
-      quantityAdded: 0, lowStockThreshold: full.lowStockThreshold || 10
+      quantityAdded: 0, lowStockThreshold: full.lowStockThreshold || 10,
+      investmentSource: 'PROFIT'
     });
     setExistingImages(full.images || []);
     setSelectedFiles([]); setFilePreviews([]);
@@ -593,7 +595,8 @@ export default function Inventory() {
         baseSellingPrice: form.baseSellingPrice ? parseFloat(form.baseSellingPrice) : undefined,
         bargainable: form.bargainable,
         images: imageUrls.length ? imageUrls : undefined,
-        note: 'Restocked via admin inventory UI'
+        note: 'Restocked via admin inventory UI',
+        investmentSource: form.investmentSource || 'PROFIT'
       };
       const token = authUtils.getToken();
       const res   = await fetch(`${API}/api/inventory/${selected.id}`, {
@@ -915,6 +918,12 @@ export default function Inventory() {
                     <label>Quantity to Add *</label>
                     <input required type="number" placeholder="e.g. 50" value={form.quantityAdded}
                       onChange={e => setForm(f => ({ ...f, quantityAdded: e.target.value }))} />
+
+                    <label>Investment Source *</label>
+                    <select value={form.investmentSource} onChange={e => setForm(f => ({ ...f, investmentSource: e.target.value }))}>
+                      <option value="PROFIT">Reinvest from profit</option>
+                      <option value="NEW">New capital investment</option>
+                    </select>
 
                     <label>New Cost Price (₹) <span style={{ fontWeight: 400, fontStyle: 'italic' }}>optional</span></label>
                     <input type="number" step="0.01" placeholder="Leave blank to keep current"

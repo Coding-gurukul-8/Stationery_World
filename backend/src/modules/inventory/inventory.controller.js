@@ -224,11 +224,11 @@ const updateInventory = async (req, res) => {
       bargainable, 
       images, 
       note,
+      investmentSource = 'NEW',
       action = 'add'
     } = req.body;
     const adminId = req.user?.id;
 
-    console.log('📦 Update inventory:', { productId, quantityAdded, quantity, action });
 
     const qtyToAdd = quantityAdded !== undefined ? quantityAdded : quantity;
 
@@ -353,6 +353,24 @@ const updateInventory = async (req, res) => {
           note: note || `${inventoryAction}: ${Math.abs(quantityChange)} units`
         }
       });
+
+      // If restocking and using profit, record the reinvestment in the profit ledger.
+      if (action === 'add' && investmentSource === 'PROFIT') {
+        const unitCost = costPrice !== undefined && costPrice !== null && costPrice !== ''
+          ? parseFloat(costPrice)
+          : product.costPrice;
+
+        const totalCost = unitCost * quantityNum;
+        if (!isNaN(totalCost) && totalCost > 0) {
+          await tx.profitLedger.create({
+            data: {
+              adminId: adminId || null,
+              amount: -Math.abs(totalCost),
+              note: `Reinvested from profit to restock ${quantityNum} unit(s) of ${product.name}`
+            }
+          });
+        }
+      }
 
       if (images && Array.isArray(images) && images.length > 0) {
         for (const img of images) {
@@ -614,8 +632,6 @@ const getProductInventory = async (req, res) => {
       lastUpdated: product.updatedAt,
       recentLogs: product.inventoryLogs
     };
-
-    console.log('✅ Product inventory retrieved');
 
     return res.status(200).json({
       success: true,

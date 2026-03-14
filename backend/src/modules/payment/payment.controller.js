@@ -236,7 +236,6 @@ const getPaymentStatus = async (req, res) => {
     const isAdmin = req.user.role === 'ADMIN';
     const { orderId } = req.params;
 
-    console.log('Get payment status:', orderId);
 
     const payment = await prisma.payment.findUnique({
       where: { orderId: parseInt(orderId) },

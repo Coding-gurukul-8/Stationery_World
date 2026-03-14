@@ -5,6 +5,13 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
+// Suppress non-error console output by default.
+// Set SUPPRESS_LOGS=false to restore console.log behavior.
+const suppressLogs = process.env.SUPPRESS_LOGS !== 'false';
+if (suppressLogs) {
+  console.log = () => {};
+}
+
 // ✅ NEW: Import email service
 const { testConnection } = require('./services/email.service');
 
@@ -56,9 +63,10 @@ app.use('/uploads', express.static(uploadsDir));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Request logging middleware
+// Request logging middleware (disabled to reduce console output)
 app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  // Uncomment to debug request traffic:
+  // console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
 });
 

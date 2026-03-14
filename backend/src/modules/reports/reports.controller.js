@@ -94,12 +94,37 @@ const generateDateRange = (startDate, endDate, filter) => {
 };
 
 // =============================================================================
-// HELPER: Get admin's product IDs
+// HELPERS: Admin product scoping
 // =============================================================================
+
+/**
+ * Return product IDs for the admin.
+ * If the admin has not created any products, fall back to all products.
+ */
+const getAdminProductIds = async (adminId) => {
+  const adminProducts = await prisma.product.findMany({
+    where: { createdById: adminId },
+    select: { id: true }
+  });
+
+  if (adminProducts.length > 0) {
+    return adminProducts.map((p) => p.id);
+  }
+
+  // Fallback: if admin has no products, return all products (so reports still show data)
+  const allProducts = await prisma.product.findMany({ select: { id: true } });
+  return allProducts.map((p) => p.id);
+};
+
+/**
+ * Get order IDs filtered to products owned by this admin (or all products if admin has none).
+ */
 const getAdminOrderIds = async (adminId, extraWhere = {}) => {
+  const productIds = await getAdminProductIds(adminId);
+
   const orderItems = await prisma.orderItem.findMany({
     where: {
-      product: { createdById: adminId },
+      productId: { in: productIds },
       order: extraWhere,
     },
     select: { orderId: true },
@@ -107,7 +132,8 @@ const getAdminOrderIds = async (adminId, extraWhere = {}) => {
   });
 
   const ids = orderItems.map((i) => i.orderId);
-  return ids.length > 0 ? ids : [-1];
+  // Fallback: if no related orders, return empty array (so queries won't error)
+  return ids;
 };
 
 // =============================================================================
@@ -116,16 +142,16 @@ const getAdminOrderIds = async (adminId, extraWhere = {}) => {
 const getDashboardSummary = async (req, res) => {
   try {
     const adminId = req.user.id;
-    console.log('🏠 Dashboard Summary | admin:', adminId);
 
-    // ── Get admin's products ───────────────────────────────────────────────────
+    // ── Get admin's products (or fall back to all products if none found) ─────
+    const adminProductIds = await getAdminProductIds(adminId);
+
     const adminProducts = await prisma.product.findMany({
-      where: { createdById: adminId, isActive: true },
+      where: { id: { in: adminProductIds }, isActive: true },
       select: { id: true, totalStock: true, lowStockThreshold: true, costPrice: true },
     });
 
     const totalProducts = adminProducts.length;
-    const adminProductIds = adminProducts.map((p) => p.id);
     const safeIds = adminProductIds.length > 0 ? adminProductIds : [-1];
 
     // Low stock products (using per-product threshold)
@@ -233,10 +259,14 @@ const getDashboardSummary = async (req, res) => {
       : 0;
 
     // ── Active Cash & Total Assets ─────────────────────────────────────────────
-    // Active Cash = Total Profit (the money earned that can be reinvested)
-    const activeCash = totalProfit;
-    
-    // Total Assets = Stock Value (inventory at CP) + Active Cash (profit earned)
+    // Active cash is derived from the profit ledger (profits earned minus reinvestments).
+    const profitLedger = await prisma.profitLedger.findMany({
+      where: { adminId },
+      select: { amount: true }
+    });
+    const activeCash = profitLedger.reduce((sum, entry) => sum + (entry.amount || 0), 0);
+
+    // Total Assets = Stock Value (inventory at CP) + Active Cash
     const totalAssets = stockValue + activeCash;
 
     // ── Round all monetary values ──────────────────────────────────────────────
@@ -274,13 +304,6 @@ const getDashboardSummary = async (req, res) => {
       totalCustomers,
     };
 
-    console.log('✅ Dashboard Summary:', {
-      totalOrders,
-      totalRevenue: roundToTwo(totalRevenue),
-      todayRevenue: roundToTwo(todayRevenue),
-      totalAssets: roundToTwo(totalAssets),
-      activeCash: roundToTwo(activeCash)
-    });
 
     return res.status(200).json({
       success: true,
@@ -306,7 +329,6 @@ const getSalesReport = async (req, res) => {
     const adminId = req.user.id;
     const { startDate, endDate, filter = 'monthly' } = req.query;
 
-    console.log('📊 Sales Report | admin:', adminId, '| filter:', filter);
 
     // ── Determine date range ──────────────────────────────────────────────────
     let start, end;
@@ -339,27 +361,8 @@ const getSalesReport = async (req, res) => {
       }
     }
 
-    // ── Get admin's products ───────────────────────────────────────────────────
-    const adminProducts = await prisma.product.findMany({
-      where: { createdById: adminId },
-      select: { id: true }
-    });
-    const productIds = adminProducts.map(p => p.id);
-
-    if (productIds.length === 0) {
-      return res.json({
-        success: true,
-        message: 'No products found for this admin.',
-        data: {
-          summary: { totalOrders: 0, totalRevenue: 0, totalProfit: 0 },
-          salesByDate: [],
-          filter,
-          startDate: start,
-          endDate: end,
-        }
-      });
-    }
-
+    // ── Get scoped product IDs (admin products OR all products if none exist) ───
+    const productIds = await getAdminProductIds(adminId);
     const safeIds = productIds.length > 0 ? productIds : [-1];
 
     // ── Get all order items with admin's products ──────────────────────────────
@@ -422,7 +425,6 @@ const getSalesReport = async (req, res) => {
     const totalProfit = salesByDate.reduce((sum, d) => sum + d.profit, 0);
     const totalOrders = salesByDate.reduce((sum, d) => sum + d.orders, 0);
 
-    console.log('✅ Sales Report generated:', { totalOrders, totalRevenue, totalProfit, dataPoints: salesByDate.length });
 
     return res.json({
       success: true,
@@ -457,7 +459,6 @@ const getSalesReport = async (req, res) => {
 const getWeeklyStats = async (req, res) => {
   try {
     const adminId = req.user.id;
-    console.log('📊 Weekly Stats | admin:', adminId);
 
     // accept optional range parameters (same semantics as other report endpoints)
     const { startDate: qsStart, endDate: qsEnd, filter } = req.query;
@@ -486,31 +487,8 @@ const getWeeklyStats = async (req, res) => {
     // choose formatting filter (default weekly)
     const fmtFilter = filter || 'weekly';
 
-    // ── Get admin's products ───────────────────────────────────────────────────
-    const adminProducts = await prisma.product.findMany({
-      where: { createdById: adminId },
-      select: { id: true }
-    });
-    const productIds = adminProducts.map(p => p.id);
-
-    if (productIds.length === 0) {
-      // No products -> produce empty array spanning requested range
-      const emptyData = generateDateRange(rangeStart, rangeEnd, fmtFilter).map(d => ({
-        date: formatDateByFilter(d, fmtFilter),
-        revenue: 0,
-        orders: 0,
-      }));
-
-      return res.json({
-        success: true,
-        message: 'Weekly stats retrieved.',
-        data: {
-          weeklyRevenue: emptyData,
-          weeklyOrders: emptyData,
-        }
-      });
-    }
-
+    // ── Get scoped product IDs (admin products OR all products if none exist) ───
+    const productIds = await getAdminProductIds(adminId);
     const safeIds = productIds.length > 0 ? productIds : [-1];
 
     // ── Get order items for the requested range ───────────────────────────────
@@ -555,7 +533,6 @@ const getWeeklyStats = async (req, res) => {
       };
     });
 
-    console.log('✅ Weekly Stats generated:', weeklyData.length, 'days');
 
     return res.json({
       success: true,
@@ -582,23 +559,9 @@ const getWeeklyStats = async (req, res) => {
 const getOrderStatusDistribution = async (req, res) => {
   try {
     const adminId = req.user.id;
-    console.log('📊 Order Status Distribution | admin:', adminId);
 
-    // ── Get admin's products ───────────────────────────────────────────────────
-    const adminProducts = await prisma.product.findMany({
-      where: { createdById: adminId },
-      select: { id: true }
-    });
-    const productIds = adminProducts.map(p => p.id);
-
-    if (productIds.length === 0) {
-      return res.json({
-        success: true,
-        message: 'No products found.',
-        data: []
-      });
-    }
-
+    // ── Get scoped product IDs (admin products OR all products if none exist) ───
+    const productIds = await getAdminProductIds(adminId);
     const safeIds = productIds.length > 0 ? productIds : [-1];
 
     // ── Get all orders with admin's products ───────────────────────────────────
@@ -646,7 +609,6 @@ const getOrderStatusDistribution = async (req, res) => {
         percentage: parseFloat(((count / orderItems.length) * 100).toFixed(2))
       }));
 
-    console.log('✅ Order Status Distribution:', distribution.length, 'statuses');
 
     return res.json({
       success: true,
@@ -673,7 +635,6 @@ const getRevenueReport = async (req, res) => {
     const adminId = req.user.id;
     const { startDate, endDate, period } = req.query;
 
-    console.log('📊 Revenue Report | admin:', adminId, '| query:', req.query);
 
     const orderFilter = {
       isPaid: true,
@@ -691,6 +652,9 @@ const getRevenueReport = async (req, res) => {
       const end   = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
       orderFilter.createdAt = { gte: start, lte: end };
     }
+
+    const productIds = await getAdminProductIds(adminId);
+    const allowedProductIds = new Set(productIds);
 
     const orderIds = await getAdminOrderIds(adminId, orderFilter);
 
@@ -727,7 +691,7 @@ const getRevenueReport = async (req, res) => {
       let dayRevenue = 0;
 
       order.items.forEach((item) => {
-        if (!item.product || item.product.createdById !== adminId) return;
+        if (!item.product || !allowedProductIds.has(item.productId)) return;
 
         const itemRevenue = item.priceAtOrder * item.quantity;
         const itemProfit  = (item.priceAtOrder - item.product.costPrice) * item.quantity;
@@ -784,7 +748,6 @@ const getRevenueReport = async (req, res) => {
 
 const getInventoryReport = async (req, res) => {
   try {
-    console.log('📦 Inventory Report');
 
     const products = await prisma.product.findMany({
       where: { isActive: true },
@@ -852,17 +815,9 @@ const getTopProducts = async (req, res) => {
     const adminId = req.user.id;
     const limit = parseInt(req.query.limit) || 10;
 
-    console.log('📊 Top Products | admin:', adminId, '| limit:', limit);
 
-    const adminProducts = await prisma.product.findMany({
-      where: { createdById: adminId },
-      select: { id: true }
-    });
-    const productIds = adminProducts.map(p => p.id);
-
-    if (productIds.length === 0) {
-      return res.json({ success: true, data: [] });
-    }
+    // Use admin's products, OR all products if admin has none
+    const productIds = await getAdminProductIds(adminId);
 
     const orderItems = await prisma.orderItem.findMany({
       where: {
@@ -909,17 +864,8 @@ const getTopProducts = async (req, res) => {
 const getCategoryPerformance = async (req, res) => {
   try {
     const adminId = req.user.id;
-    console.log('📊 Category Performance | admin:', adminId);
 
-    const adminProducts = await prisma.product.findMany({
-      where: { createdById: adminId },
-      select: { id: true }
-    });
-    const productIds = adminProducts.map(p => p.id);
-
-    if (productIds.length === 0) {
-      return res.json({ success: true, data: [] });
-    }
+    const productIds = await getAdminProductIds(adminId);
 
     // include date filtering if supplied
     const orderItemWhere = {
@@ -977,7 +923,6 @@ const getCategoryPerformance = async (req, res) => {
 
 const getProductDemand = async (req, res) => {
   try {
-    console.log('📣 Product Demand');
 
     const notifications = await prisma.productNotification.groupBy({
       by:      ['productId'],

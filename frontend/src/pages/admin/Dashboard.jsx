@@ -362,6 +362,37 @@ export default function Dashboard() {
       <style>{`
         .value-pulse { animation: valuePop 0.6s cubic-bezier(0.34,1.56,0.64,1); }
         @keyframes valuePop { 0%{transform:scale(1)} 40%{transform:scale(1.12)} 100%{transform:scale(1)} }
+
+        .dash-live-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 4px 10px;
+          border-radius: 999px;
+          border: 1px solid rgba(34, 197, 94, 0.35);
+          background: rgba(34, 197, 94, 0.12);
+          font-size: 12px;
+          font-weight: 700;
+          color: #16a34a;
+          letter-spacing: 0.5px;
+          text-transform: uppercase;
+        }
+
+        .dash-live-dot {
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+          background: #16a34a;
+          box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.75);
+          animation: livePulse 1.8s ease-out infinite;
+        }
+
+        @keyframes livePulse {
+          0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.75); }
+          50% { transform: scale(1.25); box-shadow: 0 0 0 10px rgba(34, 197, 94, 0); }
+          100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+        }
+
         .dash-stat-card.clickable:hover .sc-value { color: var(--accent); }
       `}</style>
 

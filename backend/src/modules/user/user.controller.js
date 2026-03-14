@@ -549,7 +549,6 @@ const resetPassword = async (req, res) => {
 
 const getProfile = async (req, res) => {
   try {
-    console.log('Get profile request for user:', req.user.id);
 
     // User is already attached by authMiddleware
     return res.status(200).json({
@@ -770,7 +769,6 @@ const updateProfile = async (req, res) => {
 
 const getAllUsers = async (req, res) => {
   try {
-    console.log('Get all users request by admin:', req.user.id);
 
     const users = await prisma.user.findMany({
       select: {
