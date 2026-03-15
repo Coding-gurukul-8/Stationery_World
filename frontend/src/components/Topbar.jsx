@@ -8,6 +8,7 @@ import { useSearch } from "../context/SearchContext";
 import SearchDropdown from "./SearchDropdown";
 import Logo from "./Logo";
 import { Search, X, Sun, Moon } from 'lucide-react';
+import { API_BASE_URL } from "../config/constants";
 
 const DEFAULT_AVATAR_CUSTOMER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 150 150'%3E%3Ccircle cx='75' cy='75' r='75' fill='%234d7260'/%3E%3Cpath d='M75 40c-11 0-20 9-20 20s9 20 20 20 20-9 20-20-9-20-20-20zm0 60c-16.5 0-30 8.5-30 19v6h60v-6c0-10.5-13.5-19-30-19z' fill='%23fff'/%3E%3C/svg%3E";
 const DEFAULT_AVATAR_ADMIN    = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 150 150'%3E%3Ccircle cx='75' cy='75' r='75' fill='%23c0714f'/%3E%3Cpath d='M75 40c-11 0-20 9-20 20s9 20 20 20 20-9 20-20-9-20-20-20zm0 60c-16.5 0-30 8.5-30 19v6h60v-6c0-10.5-13.5-19-30-19z' fill='%23fff'/%3E%3C/svg%3E";
@@ -15,7 +16,7 @@ const DEFAULT_AVATAR_ADMIN    = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.
 const getImageUrl = (photoUrl, userRole) => {
   if (!photoUrl) return userRole === 'ADMIN' ? DEFAULT_AVATAR_ADMIN : DEFAULT_AVATAR_CUSTOMER;
   if (photoUrl.startsWith('http://') || photoUrl.startsWith('https://') || photoUrl.startsWith('data:')) return photoUrl;
-  if (photoUrl.startsWith('/uploads/')) return `http://localhost:3000${photoUrl}`;
+  if (photoUrl.startsWith('/uploads/')) return `${API_BASE_URL}${photoUrl}`;
   return photoUrl;
 };
 

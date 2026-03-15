@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react';
 import { authUtils } from '../../utils/auth';
 import { Edit2, Camera, Save, X } from 'lucide-react';
+import { API_BASE_URL } from '../../config/constants';
 
 const DEFAULT_AVATAR = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='150' viewBox='0 0 150 150'%3E%3Ccircle cx='75' cy='75' r='75' fill='%23dc3545'/%3E%3Cpath d='M75 40c-11 0-20 9-20 20s9 20 20 20 20-9 20-20-9-20-20-20zm0 60c-16.5 0-30 8.5-30 19v6h60v-6c0-10.5-13.5-19-30-19z' fill='%23fff'/%3E%3C/svg%3E";
+
+const API = API_BASE_URL;
 
 // Helper function to get full image URL
 const getImageUrl = (photoUrl) => {
@@ -11,7 +14,7 @@ const getImageUrl = (photoUrl) => {
     return photoUrl;
   }
   if (photoUrl.startsWith('/uploads/')) {
-    return `http://localhost:3000${photoUrl}`;
+    return `${API}${photoUrl}`;
   }
   return photoUrl;
 };
@@ -93,7 +96,7 @@ export default function AdminProfile() {
 
         console.log('Uploading admin photo:', newPhoto.name, 'Size:', newPhoto.size);
 
-        const response = await fetch('http://localhost:3000/api/user/profile', {
+        const response = await fetch(`${API}/api/user/profile`, {
           method: 'PUT',
           headers: {
             'Authorization': `Bearer ${authUtils.getToken()}`
@@ -128,7 +131,7 @@ export default function AdminProfile() {
 
         console.log('Updating admin field:', field, 'Value:', editValues[field]);
 
-        const response = await fetch('http://localhost:3000/api/user/profile', {
+        const response = await fetch(`${API}/api/user/profile`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',

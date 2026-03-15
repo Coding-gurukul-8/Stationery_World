@@ -3,12 +3,15 @@ import { authUtils } from '../../utils/auth';
 import { useSearch } from '../../context/SearchContext';
 import './Reports.css';
 import './Orders.css';
+import { API_BASE_URL } from '../../config/constants';
+
+const API = API_BASE_URL;
 
 // Image URL helper
 const getImageUrl = (url) => {
   if (!url) return null;
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
-  return `http://localhost:3000${url}`;
+  return `${API}${url}`;
 };
 
 const ORDER_TYPES = [
@@ -108,7 +111,7 @@ export default function Orders() {
         return;
       }
 
-      const res = await fetch('http://localhost:3000/api/orders/admin/all', {
+      const res = await fetch(`${API}/api/orders/admin/all`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -159,7 +162,7 @@ export default function Orders() {
       const token = authUtils.getToken();
       
       // Fetch all users
-      const usersRes = await fetch('http://localhost:3000/api/users', {
+      const usersRes = await fetch(`${API}/api/users`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const usersData = await usersRes.json();
@@ -168,7 +171,7 @@ export default function Orders() {
       }
       
       // Fetch products
-      const productsRes = await fetch('http://localhost:3000/api/products');
+      const productsRes = await fetch(`${API}/api/products`);
       const productsData = await productsRes.json();
       if (productsData.success) {
         setAllProducts(productsData.data.filter(p => p.isActive && p.totalStock > 0));
@@ -223,7 +226,7 @@ export default function Orders() {
         return;
       }
       
-      const res = await fetch('http://localhost:3000/api/orders/admin/create-for-customer', {
+      const res = await fetch(`${API}/api/orders/admin/create-for-customer`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -306,7 +309,7 @@ export default function Orders() {
       const token = authUtils.getToken();
       const body = { userId: selected.user.id, productId: parseInt(permissionProductId) };
       if (permissionExpires) body.expiresAt = permissionExpires;
-      const res = await fetch('http://localhost:3000/api/bargain/admin/permission', {
+      const res = await fetch(`${API}/api/bargain/admin/permission`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify(body)
@@ -357,7 +360,7 @@ export default function Orders() {
     try {
       const token = authUtils.getToken();
 
-      const res = await fetch(`http://localhost:3000/api/orders/admin/${orderId}/status`, {
+      const res = await fetch(`${API}/api/orders/admin/${orderId}/status`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -392,7 +395,7 @@ export default function Orders() {
     try {
       const token = authUtils.getToken();
 
-      const res = await fetch(`http://localhost:3000/api/orders/admin/${orderId}/mark-paid`, {
+      const res = await fetch(`${API}/api/orders/admin/${orderId}/mark-paid`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -421,7 +424,7 @@ export default function Orders() {
     try {
       const token = authUtils.getToken();
 
-      const res = await fetch(`http://localhost:3000/api/orders/admin/${orderId}/refund`, {
+      const res = await fetch(`${API}/api/orders/admin/${orderId}/refund`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`

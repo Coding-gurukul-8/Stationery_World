@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { authUtils } from '../../utils/auth';
 import './Orders.css';
+import { API_BASE_URL } from '../../config/constants';
 
-const API = 'http://localhost:3000';
+const API = API_BASE_URL;
 
 // Helper to get full image URL
 const getImageUrl = (url) => {

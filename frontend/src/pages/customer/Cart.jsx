@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { ShoppingCart, Trash2, Plus, Minus, Loader, Package, ArrowRight, ShoppingBag, X } from 'lucide-react';
 import './Cart.css';
+import { API_BASE_URL } from '../../config/constants';
 
-const API = 'http://localhost:3000';
+const API = API_BASE_URL;
 const getImageUrl = (url) => {
   if (!url) return null;
   if (url.startsWith('http://') || url.startsWith('https://')) return url;

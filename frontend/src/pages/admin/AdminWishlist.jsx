@@ -4,8 +4,9 @@ import { useSearch } from '../../context/SearchContext';
 import { authUtils } from '../../utils/auth';
 import ProductDetailModal from '../../components/shop/ProductDetailModal';
 import './AdminWishlist.css';
+import { API_BASE_URL } from '../../config/constants';
 
-const API = 'http://localhost:3000';
+const API = API_BASE_URL;
 const getImageUrl = (url) => {
   if (!url) return '/placeholder.png';
   if (url.startsWith('http://') || url.startsWith('https://')) return url;

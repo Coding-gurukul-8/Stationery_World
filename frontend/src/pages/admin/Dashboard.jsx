@@ -5,9 +5,10 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend, CartesianGrid, AreaChart, Area
 } from "recharts";
+import { API_BASE_URL } from "../../config/constants";
 
 /* ─── Constants ─────────────────────────────────────────── */
-const API = "http://localhost:3000";
+const API = API_BASE_URL;
 const POLL_INTERVAL = 20_000;
 
 const DEFAULT_AVATAR = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='150' viewBox='0 0 150 150'%3E%3Ccircle cx='75' cy='75' r='75' fill='%232563eb'/%3E%3Cpath d='M75 40c-11 0-20 9-20 20s9 20 20 20 20-9 20-20-9-20-20-20zm0 60c-16.5 0-30 8.5-30 19v6h60v-6c0-10.5-13.5-19-30-19z' fill='%23fff'/%3E%3C/svg%3E";

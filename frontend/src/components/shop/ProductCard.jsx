@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Heart, ShoppingCart, Eye, Zap, Bell } from 'lucide-react';
 import BargainModal from './BargainModal';
+import { API_BASE_URL } from '../../config/constants';
 
 export default function ProductCard({ product, variant = 'standard', onAddToCart, onToggleWishlist, onViewProduct, onBuyNow, isWishlisted = false }) {
   // guard against undefined product to avoid blank render/crash
@@ -20,8 +21,8 @@ export default function ProductCard({ product, variant = 'standard', onAddToCart
                          product.images?.[0]?.url;
     if (!primaryImage) return '/placeholder.png';
     if (primaryImage.startsWith('http://') || primaryImage.startsWith('https://')) return primaryImage;
-    if (primaryImage.startsWith('/uploads')) return `http://localhost:3000${primaryImage}`;
-    return `http://localhost:3000${primaryImage}`;
+    if (primaryImage.startsWith('/uploads')) return `${API_BASE_URL}${primaryImage}`;
+    return `${API_BASE_URL}${primaryImage}`;
   };
 
   const imageUrl = getImageUrl();
@@ -47,7 +48,7 @@ export default function ProductCard({ product, variant = 'standard', onAddToCart
         headers['Authorization'] = `Bearer ${token}`;
       }
 
-      const response = await fetch(`http://localhost:3000/api/bargain/eligibility/${product.id}`, {
+      const response = await fetch(`${API_BASE_URL}/api/bargain/eligibility/${product.id}`, {
         method: 'GET',
         headers
       });
@@ -101,7 +102,7 @@ export default function ProductCard({ product, variant = 'standard', onAddToCart
 
       const user = JSON.parse(localStorage.getItem('user') || '{}');
 
-      const response = await fetch(`http://localhost:3000/api/products/${product.id}/notify`, {
+      const response = await fetch(`${API_BASE_URL}/api/products/${product.id}/notify`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

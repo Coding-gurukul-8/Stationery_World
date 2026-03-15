@@ -7,8 +7,9 @@ import {
 import { authUtils } from "../../utils/auth";
 import "./Reports.css";
 import { downloadCSV, downloadPDF } from "../../utils/reportExport";
+import { API_BASE_URL } from "../../config/constants";
 
-const API = "http://localhost:3000";
+const API = API_BASE_URL;
 
 const PIE_COLORS    = ["#2563eb","#16a34a","#d97706","#dc2626","#7c3aed","#0891b2","#db2777","#65a30d"];
 const STATUS_COLORS = {

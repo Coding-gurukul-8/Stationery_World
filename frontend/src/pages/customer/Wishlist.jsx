@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react';
 import { Heart, Trash2, ShoppingCart, Loader, Package, IndianRupee } from 'lucide-react';
 import './Wishlist.css';
 import ProductDetailModal from '../../components/shop/ProductDetailModal';
+import { API_BASE_URL } from '../../config/constants';
 
-const API = 'http://localhost:3000';
+const API = API_BASE_URL;
 
 export default function Wishlist() {
   const [wishlistItems, setWishlistItems] = useState([]);

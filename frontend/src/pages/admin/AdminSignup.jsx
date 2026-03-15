@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { API_BASE_URL } from "../../config/constants";
 import "./VerifyOTP.css";
 
 // ─── Password rules (mirrors backend passwordValidator) ───────────────────────
@@ -112,8 +113,9 @@ export default function AdminSignup() {
       fd.append('country',     form.country);
       if (photoFile) fd.append('photo', photoFile);  // field name 'photo' matches multer
 
-      const res = await fetch('/api/user/signup', { method: 'POST', body: fd });
-      const data = await res.json();
+      const res = await fetch(`${API_BASE_URL}/api/user/signup`, { method: 'POST', body: fd });
+      const text = await res.text();
+      const data = text ? JSON.parse(text) : null;
 
       if (data?.success) {
         alert('✅ Admin account created! Please log in.');
@@ -123,7 +125,7 @@ export default function AdminSignup() {
         if (data?.errors?.length) {
           setError('Password must have: ' + data.errors.join(', '));
         } else {
-          setError(data?.message || 'Signup failed');
+          setError(data?.message || `Signup failed${res.ok ? '' : ` (HTTP ${res.status})`}`);
         }
       }
     } catch (err) {

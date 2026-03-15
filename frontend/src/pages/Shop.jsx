@@ -8,8 +8,9 @@ import ProductGrid from '../components/shop/ProductGrid';
 import ProductDetailModal from '../components/shop/ProductDetailModal';
 import { Loader, X, Search, CheckCircle, ShoppingBag } from 'lucide-react';
 import '../../Style/shop.css';
+import { API_BASE_URL } from '../config/constants';
 
-const API = 'http://localhost:3000';
+const API = API_BASE_URL;
 
 export default function Shop() {
   const [products, setProducts] = useState([]);
@@ -48,7 +49,7 @@ export default function Shop() {
     try {
       const token = localStorage.getItem('token');
       if (!token) return;
-      const res = await fetch('http://localhost:3000/api/wishlist', { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(`${API}/api/wishlist`, { headers: { Authorization: `Bearer ${token}` } });
       const result = await res.json();
       if (result.success) setWishlistIds(new Set((result.data || []).map(w => w.productId)));
     } catch {}
@@ -106,8 +107,8 @@ export default function Shop() {
       setLoading(true);
       const token = localStorage.getItem('token');
       const url = token
-        ? 'http://localhost:3000/api/products/recommended?limit=20'
-        : 'http://localhost:3000/api/products';
+        ? `${API}/api/products/recommended?limit=20`
+        : `${API}/api/products`;
 
       const response = await fetch(url, {
         headers: token ? { Authorization: `Bearer ${token}` } : {}
@@ -117,7 +118,7 @@ export default function Shop() {
       if (!result.success) {
         // If recommendations fail (invalid/expired token), fall back to public products
         if (token) {
-          const fallbackRes = await fetch('http://localhost:3000/api/products');
+          const fallbackRes = await fetch(`${API}/api/products`);
           const fallbackResult = await fallbackRes.json();
 
           if (!fallbackResult.success) {
@@ -209,7 +210,7 @@ export default function Shop() {
         return;
       }
 
-      const response = await fetch('http://localhost:3000/api/cart', {
+      const response = await fetch(`${API}/api/cart`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -246,7 +247,7 @@ export default function Shop() {
       const isWishlisted = wishlistIds.has(product.id);
 
       if (isWishlisted) {
-        const res = await fetch(`http://localhost:3000/api/wishlist/${product.id}`, {
+        const res = await fetch(`${API}/api/wishlist/${product.id}`, {
           method: 'DELETE',
           headers: { Authorization: `Bearer ${token}` }
         });
@@ -255,7 +256,7 @@ export default function Shop() {
         setWishlistIds(prev => { const s = new Set(prev); s.delete(product.id); return s; });
         showToast(`${product.name} removed from wishlist 💔`, 'info');
       } else {
-        const res = await fetch('http://localhost:3000/api/wishlist', {
+        const res = await fetch(`${API}/api/wishlist`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({ productId: product.id })
@@ -296,19 +297,19 @@ export default function Shop() {
     setBuyNowLoading(true);
     try {
       const token = localStorage.getItem('token');
-      const cartRes = await fetch('http://localhost:3000/api/cart', {
+      const cartRes = await fetch(`${API}/api/cart`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ productId: buyNowProduct.id, quantity: buyNowQty })
       });
       const cartResult = await cartRes.json();
       if (!cartResult.success) throw new Error(cartResult.message);
-      const orderRes = await fetch('http://localhost:3000/api/orders', {
+      const orderRes = await fetch(`${API}/api/orders`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(buyNowForm)
       });
       const orderResult = await orderRes.json();
       if (!orderResult.success) throw new Error(orderResult.message);
-      const confirmRes = await fetch(`http://localhost:3000/api/orders/${orderResult.data.id}/confirm`, {
+      const confirmRes = await fetch(`${API}/api/orders/${orderResult.data.id}/confirm`, {
         method: 'POST', headers: { Authorization: `Bearer ${token}` }
       });
       const confirmResult = await confirmRes.json();

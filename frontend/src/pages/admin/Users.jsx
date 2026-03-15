@@ -2,8 +2,11 @@ import { useEffect, useState, useMemo } from 'react';
 import { authUtils } from '../../utils/auth';
 import { useSearch } from '../../context/SearchContext';
 import './Reports.css';
+import { API_BASE_URL } from '../../config/constants';
 
 const DEFAULT_AVATAR = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 150 150'%3E%3Ccircle cx='75' cy='75' r='75' fill='%239ca3af'/%3E%3Cpath d='M75 40c-11 0-20 9-20 20s9 20 20 20 20-9 20-20-9-20-20-20zm0 60c-16.5 0-30 8.5-30 19v6h60v-6c0-10.5-13.5-19-30-19z' fill='%23fff'/%3E%3C/svg%3E";
+
+const API = API_BASE_URL;
 
 export default function Users() {
   const [users, setUsers] = useState([]);
@@ -30,7 +33,7 @@ export default function Users() {
       return photoUrl;
     }
     if (photoUrl.startsWith('/uploads/')) {
-      return `http://localhost:3000${photoUrl}`;
+      return `${API}${photoUrl}`;
     }
     return photoUrl;
   };
@@ -75,7 +78,7 @@ export default function Users() {
         return;
       }
 
-      const res = await fetch('http://localhost:3000/api/user/all', {
+      const res = await fetch(`${API}/api/user/all`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -137,7 +140,7 @@ export default function Users() {
     try {
       const token = authUtils.getToken();
 
-      const res = await fetch(`http://localhost:3000/api/user/profile/${u.id}`, {
+      const res = await fetch(`${API}/api/user/profile/${u.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

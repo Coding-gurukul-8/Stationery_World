@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ShoppingBag, Sparkles } from 'lucide-react';
+import { API_BASE_URL } from '../../config/constants';
 
 export default function Hero({ featured, onShopNow }) {
   const [imageError, setImageError] = useState(false);
@@ -15,10 +16,10 @@ export default function Hero({ featured, onShopNow }) {
     }
     
     if (primaryImage.startsWith('/uploads')) {
-      return `http://localhost:3000${primaryImage}`;
+      return `${API_BASE_URL}${primaryImage}`;
     }
     
-    return `http://localhost:3000${primaryImage}`;
+    return `${API_BASE_URL}${primaryImage}`;
   };
 
   const imageUrl = getImageUrl();

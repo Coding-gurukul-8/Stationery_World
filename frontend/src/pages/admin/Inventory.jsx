@@ -1,9 +1,10 @@
 import { useEffect, useState, useMemo } from 'react';
 import { authUtils } from '../../utils/auth';
 import './Inventory.css';
+import { API_BASE_URL } from '../../config/constants';
 
 const DEFAULT_CATEGORIES = ['STATIONERY', 'BOOKS', 'TOYS'];
-const API = 'http://localhost:3000';
+const API = API_BASE_URL;
 
 const getImageUrl = (url) => {
   if (!url) return null;

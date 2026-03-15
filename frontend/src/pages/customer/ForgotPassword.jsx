@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import "./customer-auth.css";
+import { API_BASE_URL } from '../../config/constants';
+const API = API_BASE_URL;
+
 
 const PW_RULES = [
   { key: 'uc',  label: '1 Uppercase letter',   test: v => /[A-Z]/.test(v) },
@@ -68,7 +71,7 @@ export default function ForgotPassword() {
     if (!email) { setError('Please enter your email'); return; }
     setLoading(true); clear();
     try {
-      const res  = await fetch('http://localhost:3000/api/user/forgot-password', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email: email.toLowerCase().trim() }) });
+      const res  = await fetch(`${API}/api/user/forgot-password`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email: email.toLowerCase().trim() }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || 'Failed to send OTP');
       setMessage(`OTP sent to ${email}. Check your inbox!`);
@@ -82,7 +85,7 @@ export default function ForgotPassword() {
     if (!otp || otp.length !== 6) { setError('Please enter the 6-digit OTP'); return; }
     setLoading(true); clear();
     try {
-      const res  = await fetch('http://localhost:3000/api/user/verify-otp', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email: email.toLowerCase().trim(), otp }) });
+      const res  = await fetch(`${API}/api/user/verify-otp`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email: email.toLowerCase().trim(), otp }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || 'Invalid OTP');
       setMessage('OTP verified! Set your new password.');
@@ -99,7 +102,7 @@ export default function ForgotPassword() {
     if (password !== confirm) { setError('Passwords do not match'); return; }
     setLoading(true);
     try {
-      const res  = await fetch('http://localhost:3000/api/user/reset-password', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email: email.toLowerCase().trim(), otp, newPassword: password }) });
+      const res  = await fetch(`${API}/api/user/reset-password`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email: email.toLowerCase().trim(), otp, newPassword: password }) });
       const data = await res.json();
       if (!res.ok) {
         if (data?.errors?.length) { setError('Password must have: ' + data.errors.join(', ')); return; }

@@ -137,7 +137,7 @@ async function main() {
         totalSp += subtotalSp;
         totalCp += subtotalCp;
 
-        await tx.orderItem.create({ data: { orderId: order.id, productId: product.id, productName: product.name, productPhoto: product.images[0]?.url || null, quantity: it.quantity, cp: it.cp, sp: it.sp, subtotalSp, subtotalCp } });
+        await tx.orderItem.create({ data: { orderId: order.id, productId: product.id, productName: product.name, productPhoto: product.images[0]?.url || null, quantity: it.quantity, cp: it.cp, sp: it.sp, subtotalSp, subtotalCp, priceAtOrder: it.sp } });
       }
 
       await tx.order.update({ where: { id: order.id }, data: { totalSp, totalCp } });
@@ -169,7 +169,7 @@ async function main() {
         totalSp += subtotalSp;
         totalCp += subtotalCp;
 
-        await tx.orderItem.create({ data: { orderId: order.id, productId: product.id, productName: product.name, productPhoto: product.images[0]?.url || null, quantity: it.quantity, cp: it.cp, sp: it.sp, subtotalSp, subtotalCp } });
+        await tx.orderItem.create({ data: { orderId: order.id, productId: product.id, productName: product.name, productPhoto: product.images[0]?.url || null, quantity: it.quantity, cp: it.cp, sp: it.sp, subtotalSp, subtotalCp, priceAtOrder: it.sp } });
 
         // decrement stock
         await tx.product.update({ where: { id: product.id }, data: { totalStock: { decrement: it.quantity }, totalSold: { increment: it.quantity } } });

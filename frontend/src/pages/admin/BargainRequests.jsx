@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import { authUtils } from '../../utils/auth';
 import { useSearch } from '../../context/SearchContext';
 import './BargainRequests.css';
+import { API_BASE_URL } from '../../config/constants';
 
-const API = 'http://localhost:3000';
+const API = API_BASE_URL;
 
 export default function BargainRequests() {
   const [requests, setRequests] = useState([]);
