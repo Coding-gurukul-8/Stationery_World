@@ -8,6 +8,13 @@ const prismaLogConfig = process.env.PRISMA_LOG ? process.env.PRISMA_LOG.split(',
 // Fallback to DATABASE_URL if DIRECT_URL is not provided.
 const prismaDbUrl = process.env.DIRECT_URL || process.env.DATABASE_URL;
 
+if (!prismaDbUrl) {
+  throw new Error(
+    'Environment variable not set: please set DIRECT_URL or DATABASE_URL (prefer DIRECT_URL for Supabase).' +
+    ' Example: DIRECT_URL="postgresql://user:password@host:5432/postgres"'
+  );
+}
+
 const prisma = new PrismaClient({
   log: prismaLogConfig,
   datasources: {
