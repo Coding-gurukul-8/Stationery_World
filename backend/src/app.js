@@ -218,7 +218,7 @@ app.use((err, req, res, next) => {
 // SERVER START
 // ===========================
 
-app.listen(PORT, async () => {
+app.listen(PORT, () => {
   console.log('=================================');
   console.log(`🚀 Stationery Store API v2.0.0`);
   console.log(`Server running on port ${PORT}`);
@@ -227,19 +227,6 @@ app.listen(PORT, async () => {
   console.log(`Uploads directory: ${uploadsDir}`);
   console.log(`Products upload directory: ${productsUploadDir}`);
   console.log('=================================');
-  console.log('');
-  
-  // ✅ NEW: Test email service connection
-  console.log('📧 Testing email service...');
-  const emailConnected = await testConnection();
-  
-  if (emailConnected) {
-    console.log('✅ Email service is ready');
-  } else {
-    console.log('⚠️  Email service not configured (OTP emails will fail)');
-    console.log('   Add EMAIL_HOST, EMAIL_USER, EMAIL_PASS to .env');
-  }
-  
   console.log('');
   console.log('📦 Modules Loaded:');
   console.log('  ✅ User Authentication');
@@ -253,6 +240,19 @@ app.listen(PORT, async () => {
   console.log('  ✅ Reports & Analytics');
   console.log('  ✅ Password Reset (OTP)');
   console.log('=================================');
+
+  // Test email service connectivity in the background so it never delays
+  // the server's health-check response (especially on Render, where SMTP
+  // timeouts can take several seconds).
+  console.log('📧 Testing email service (background)...');
+  testConnection().then((ok) => {
+    if (!ok) {
+      console.log('⚠️  Email service not ready. Set EMAIL_PROVIDER=resend + RESEND_API_KEY,');
+      console.log('   or configure EMAIL_HOST / EMAIL_USER / EMAIL_PASS for SMTP.');
+    }
+  }).catch((err) => {
+    console.error('❌ Email service check failed:', err.message);
+  });
 });
 
 module.exports = app;
