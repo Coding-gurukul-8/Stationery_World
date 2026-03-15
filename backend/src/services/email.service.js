@@ -1,22 +1,36 @@
 const nodemailer = require('nodemailer');
 
-// Create transporter
-const emailPort = parseInt(process.env.EMAIL_PORT, 10) || (() => {
-  console.warn('⚠️  EMAIL_PORT not set or invalid; defaulting to 465 (SSL).');
-  return 465;
-})();
-const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-  port: emailPort,
-  secure: emailPort === 465, // true for port 465 (SSL), false for 587 (STARTTLS)
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-  connectionTimeout: 10000, // 10 seconds to establish TCP connection
-  greetingTimeout: 10000,   // 10 seconds for SMTP greeting
-  socketTimeout: 15000,     // 15 seconds for socket inactivity
-});
+// Create transporter lazily so env vars are always resolved at call time.
+let _transporter = null;
+
+function getTransporter() {
+  if (_transporter) return _transporter;
+
+  const emailPort = parseInt(process.env.EMAIL_PORT, 10) || 587;
+  const isSecure  = emailPort === 465; // true for SMTPS (465), false for STARTTLS (587)
+
+  _transporter = nodemailer.createTransport({
+    host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+    port: emailPort,
+    secure: isSecure,
+    // Force STARTTLS upgrade on port 587 / non-secure connections
+    requireTLS: !isSecure,
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+    tls: {
+      // Allow self-signed certs on some hosting environments; still enforces
+      // encryption — only disables strict CA chain validation.
+      rejectUnauthorized: process.env.EMAIL_TLS_REJECT_UNAUTHORIZED !== 'false',
+    },
+    connectionTimeout: 10000, // 10 seconds to establish TCP connection
+    greetingTimeout: 10000,   // 10 seconds for SMTP greeting
+    socketTimeout: 30000,     // 30 seconds — increased from 15s to allow for slower SMTP servers
+  });
+
+  return _transporter;
+}
 
 // Send OTP Email
 const sendOTPEmail = async (email, otp, name = 'User') => {
@@ -74,11 +88,13 @@ const sendOTPEmail = async (email, otp, name = 'User') => {
       text: `Hi ${name},\n\nYour OTP for password reset is: ${otp}\n\nThis OTP is valid for ${process.env.OTP_EXPIRY_MINUTES || 10} minutes.\n\nIf you didn't request this, please ignore this email.\n\nBest regards,\nStationery World Team`
     };
 
-    const info = await transporter.sendMail(mailOptions);
+    const info = await getTransporter().sendMail(mailOptions);
     console.log('OTP email sent:', info.messageId);
     return { success: true, messageId: info.messageId };
   } catch (error) {
     console.error('Error sending OTP email:', error);
+    // Reset cached transporter so the next request creates a fresh connection
+    _transporter = null;
     return { success: false, error: error.message };
   }
 };
@@ -86,11 +102,13 @@ const sendOTPEmail = async (email, otp, name = 'User') => {
 // Test email connection
 const testConnection = async () => {
   try {
-    await transporter.verify();
+    await getTransporter().verify();
     console.log('✅ Email service is ready');
     return true;
   } catch (error) {
-    console.error('❌ Email service error:', error);
+    console.error('❌ Email service error:', error.message || error);
+    // Reset cached transporter so subsequent calls retry with fresh settings
+    _transporter = null;
     return false;
   }
 };

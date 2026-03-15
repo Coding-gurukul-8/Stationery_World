@@ -74,8 +74,17 @@ export default function ForgotPassword() {
       const res  = await fetch(`${API}/api/user/forgot-password`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email: email.toLowerCase().trim() }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || 'Failed to send OTP');
-      setMessage(`OTP sent to ${email}. Check your inbox!`);
+
       sessionStorage.setItem('resetEmail', email);
+
+      // Development fallback: OTP is returned in the response when email delivery failed
+      if (data.data?.otp) {
+        setOtp(data.data.otp);
+        setMessage('Email delivery failed in dev mode. OTP has been auto-filled.');
+      } else {
+        setMessage(`OTP sent to ${email}. Check your inbox!`);
+      }
+
       setStep(2);
     } catch(err) { setError(err.message || 'Failed to send OTP'); }
     finally { setLoading(false); }
