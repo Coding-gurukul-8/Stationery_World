@@ -1,7 +1,10 @@
 const nodemailer = require('nodemailer');
 
 // Create transporter
-const emailPort = parseInt(process.env.EMAIL_PORT, 10) || 465;
+const emailPort = parseInt(process.env.EMAIL_PORT, 10) || (() => {
+  console.warn('⚠️  EMAIL_PORT not set or invalid; defaulting to 465 (SSL).');
+  return 465;
+})();
 const transporter = nodemailer.createTransport({
   host: process.env.EMAIL_HOST || 'smtp.gmail.com',
   port: emailPort,
