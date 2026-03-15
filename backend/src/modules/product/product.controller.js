@@ -124,7 +124,8 @@ const getProductById = async (req, res) => {
     }
 
     const product = await prisma.product.findUnique({
-      where: { id: productId }
+      where: { id: productId },
+      include: { images: true }
     });
 
     if (!product) {
@@ -167,6 +168,7 @@ const getProductsByCategory = async (req, res) => {
         category: upperCategory,
         isActive: true
       },
+      include: { images: true },
       orderBy: {
         name: 'asc'
       }
@@ -435,7 +437,8 @@ const updateProduct = async (req, res) => {
       lowStockThreshold,
       isActive,
       bargainConfig,
-      bulkDiscounts
+      bulkDiscounts,
+      images
     } = req.body;
 
     // Build update data
@@ -521,7 +524,8 @@ const updateProduct = async (req, res) => {
     // ===================================================
 
     // Check if there's anything to update
-    if (Object.keys(updateData).length === 0 && !bargainConfig && !bulkDiscounts) {
+    const hasImages = Array.isArray(images) && images.length > 0;
+    if (Object.keys(updateData).length === 0 && !bargainConfig && !bulkDiscounts && !hasImages) {
       return res.status(400).json({
         success: false,
         message: 'No fields to update.'
@@ -535,6 +539,25 @@ const updateProduct = async (req, res) => {
     });
 
     console.log('Product updated successfully:', productId);
+
+    // -- images handling --
+    if (hasImages) {
+      const validImageUrls = images.filter(url => typeof url === 'string' && url.startsWith('/uploads/products/'));
+      if (validImageUrls.length > 0) {
+        await prisma.$transaction([
+          prisma.productImage.deleteMany({ where: { productId } }),
+          ...validImageUrls.map((imgUrl, idx) =>
+            prisma.productImage.create({
+              data: {
+                productId,
+                url: imgUrl,
+                isPrimary: idx === 0
+              }
+            })
+          )
+        ]);
+      }
+    }
 
     // -- bargain config handling --
     if (bargainConfig) {
