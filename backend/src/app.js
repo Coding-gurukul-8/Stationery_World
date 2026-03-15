@@ -52,7 +52,7 @@ if (!fs.existsSync(productsUploadDir)) {
 
 // CORS configuration
 app.use(cors({
-  origin: '*',
+  origin: true,
   credentials: true
 }));
 
