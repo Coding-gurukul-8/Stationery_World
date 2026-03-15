@@ -55,6 +55,19 @@ const requestOTP = async (req, res) => {
     const emailResult = await sendOTPEmail(user.email, otp, user.name);
 
     if (!emailResult.success) {
+      console.error('OTP email send failed (continuing):', emailResult.error);
+
+      // In dev environments (or when explicitly allowed), return the OTP in the response so the flow can continue
+      // even when email delivery isn't possible (e.g., Render blocks outbound SMTP).
+      const allowFallback = process.env.OTP_FALLBACK === 'true' || process.env.NODE_ENV !== 'production';
+      if (allowFallback) {
+        return res.status(200).json({
+          success: true,
+          message: 'OTP generated (email delivery failed). Use OTP from response in development.',
+          data: { email: user.email, otp, expiresIn: expiryMinutes }
+        });
+      }
+
       return res.status(500).json({
         success: false,
         message: 'Failed to send OTP email. Please try again.'

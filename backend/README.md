@@ -33,12 +33,32 @@ A fully functional REST API built with Node.js, Express, Prisma, and PostgreSQL 
 
 3. **Configure environment variables**
    
-   Update the `.env` file with your database credentials:
+   Copy `.env.example` to `.env`, then update values for your environment.
+
+   For Supabase (recommended):
+   - `DATABASE_URL` should use the **pooler** URL (port 6543)
+   - `DIRECT_URL` should use the **direct** URL (port 5432) so migrations and Prisma work reliably
+   
+   Example `.env`:
    ```
-   DATABASE_URL="postgresql://username:password@localhost:5432/stationery_store?schema=public"
+   DATABASE_URL="postgresql://username:password@host:6543/postgres"
+   DIRECT_URL="postgresql://username:password@host:5432/postgres"
    JWT_SECRET="your-super-secret-jwt-key-change-this-in-production"
    PORT=5000
    NODE_ENV=development
+   
+   # Email (SMTP)
+   EMAIL_HOST=smtp.example.com
+   EMAIL_PORT=587
+   EMAIL_USER="user@example.com"
+   EMAIL_PASS="supersecret"
+   EMAIL_FROM="Stationery World <noreply@example.com>"
+
+   # OTP settings
+   OTP_EXPIRY_MINUTES=10
+   # Set to true in dev to return the OTP in the API response when email delivery fails
+   # (useful when SMTP is blocked in your environment)
+   OTP_FALLBACK=true
    ```
 
 4. **Set up the database**
