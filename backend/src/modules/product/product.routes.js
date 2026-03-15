@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const path = require('path');
+const { uploadToCloudinary } = require('../../utils/cloudinary');
 const {
   getAllProducts,
   getProductById,
@@ -18,25 +19,15 @@ const {
 } = require('./product.controller');
 const { authMiddleware, adminMiddleware } = require('../user/user.middleware');
 
-// Multer setup (existing)
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, 'uploads/products/');
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, 'product-' + uniqueSuffix + path.extname(file.originalname));
-  }
-});
-
+// Multer setup — use memory storage so files are uploaded to Cloudinary, not local disk
 const upload = multer({
-  storage: storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: function (req, file, cb) {
     const filetypes = /jpeg|jpg|png|gif|webp/;
     const mimetype = filetypes.test(file.mimetype);
     const extname = filetypes.test(path.extname(file.originalname).toLowerCase());
-    
+
     if (mimetype && extname) {
       return cb(null, true);
     }
@@ -44,8 +35,8 @@ const upload = multer({
   }
 });
 
-// Image upload route
-router.post('/upload-images', authMiddleware, adminMiddleware, upload.array('images', 6), (req, res) => {
+// Image upload route — stores images permanently on Cloudinary
+router.post('/upload-images', authMiddleware, adminMiddleware, upload.array('images', 6), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({
@@ -54,12 +45,15 @@ router.post('/upload-images', authMiddleware, adminMiddleware, upload.array('ima
       });
     }
 
-    const urls = req.files.map(file => `/uploads/products/${file.filename}`);
+    const uploads = await Promise.all(
+      req.files.map(file => uploadToCloudinary(file.buffer, 'stationery_world/products'))
+    );
+    const urls = uploads.map(u => u.url);
 
     return res.status(200).json({
       success: true,
       message: 'Images uploaded successfully',
-      urls: urls
+      urls
     });
   } catch (error) {
     console.error('Image upload error:', error);

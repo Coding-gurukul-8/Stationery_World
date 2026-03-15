@@ -3,43 +3,21 @@ const jwt = require('jsonwebtoken');
 const prisma = require('../../../prisma/client');
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs');
 const { sendOTPEmail } = require('../../services/email.service');
 const { validatePassword, getPasswordRequirementsText } = require('../../utils/passwordValidator');
+const { uploadToCloudinary, deleteFromCloudinary } = require('../../utils/cloudinary');
 const crypto = require('crypto');
 
 // ===========================
 // MULTER CONFIGURATION
 // ===========================
 
-// Ensure upload directories exist on startup
-const uploadsDir = path.join(__dirname, '../../../uploads');
-const usersUploadDir = path.join(uploadsDir, 'users');
-
-[uploadsDir, usersUploadDir].forEach((dir) => {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-    console.log('✅ Created upload directory:', dir);
-  }
-});
-
-// ✅ Storage engine — saves profile photos to /uploads/users/
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, usersUploadDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, 'user-' + uniqueSuffix + path.extname(file.originalname).toLowerCase());
-  }
-});
-
 // File filter
 const fileFilter = (req, file, cb) => {
   const allowedTypes = /jpeg|jpg|png|gif|webp/;
   const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
   const mimetype = allowedTypes.test(file.mimetype);
-  
+
   if (mimetype && extname) {
     return cb(null, true);
   } else {
@@ -47,25 +25,14 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
-// Multer instance
+// Multer instance — use memory storage so files are uploaded to Cloudinary, not local disk
 const upload = multer({
-  storage: storage,
+  storage: multer.memoryStorage(),
   limits: {
     fileSize: 5 * 1024 * 1024 // 5MB limit
   },
   fileFilter: fileFilter
 }).single('photo'); // 'photo' is the field name from frontend
-
-// ===========================
-// HELPER: safe file delete
-// ===========================
-const safeUnlink = (filePath) => {
-  try {
-    if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
-  } catch (e) {
-    console.error('safeUnlink error:', e.message);
-  }
-};
 
 // ===========================
 // SIGNUP CONTROLLER
@@ -92,10 +59,13 @@ const signup = async (req, res) => {
       });
     }
 
+    // Track Cloudinary publicId so we can clean up on failure
+    let cloudinaryPublicId = null;
+
     try {
       console.log('Signup request received');
       console.log('Request body:', { ...req.body, password: '[HIDDEN]' });
-      console.log('Uploaded file:', req.file ? req.file.filename : 'No file uploaded');
+      console.log('Uploaded file:', req.file ? req.file.originalname : 'No file uploaded');
 
       const {
         name,
@@ -132,7 +102,6 @@ const signup = async (req, res) => {
       // ✅ Password strength — shared validator
       const pwCheck = validatePassword(password);
       if (!pwCheck.isValid) {
-        safeUnlink(req.file?.path);
         return res.status(400).json({
           success: false,
           message: 'Password does not meet security requirements.',
@@ -147,9 +116,6 @@ const signup = async (req, res) => {
       });
 
       if (existingUser) {
-        // Delete uploaded file if user already exists
-        safeUnlink(req.file?.path);
-        
         return res.status(409).json({
           success: false,
           message: 'User with this email already exists.'
@@ -163,14 +129,19 @@ const signup = async (req, res) => {
         });
 
         if (existingPhone) {
-          // Delete uploaded file if phone already exists
-          safeUnlink(req.file?.path);
-          
           return res.status(409).json({
             success: false,
             message: 'User with this phone number already exists.'
           });
         }
+      }
+
+      // Upload photo to Cloudinary (if provided)
+      let photoUrl = null;
+      if (req.file) {
+        const uploaded = await uploadToCloudinary(req.file.buffer, 'stationery_world/users');
+        photoUrl = uploaded.url;
+        cloudinaryPublicId = uploaded.publicId;
       }
 
       // Hash password
@@ -179,9 +150,6 @@ const signup = async (req, res) => {
 
       // Determine user role (default to CUSTOMER)
       const userRole = role === 'ADMIN' ? 'ADMIN' : 'CUSTOMER';
-
-      // ✅ Photo URL — saved in /uploads/users/ subdirectory
-      const photoUrl = req.file ? `/uploads/users/${req.file.filename}` : null;
 
       // Create user with optional profile fields
       const newUser = await prisma.user.create({
@@ -233,9 +201,9 @@ const signup = async (req, res) => {
         data: { user: newUser, token }
       });
     } catch (error) {
-      // Delete uploaded file if database operation fails
-      safeUnlink(req.file?.path);
-      
+      // Delete Cloudinary image if database operation fails
+      if (cloudinaryPublicId) await deleteFromCloudinary(cloudinaryPublicId);
+
       console.error('Signup error:', error);
       return res.status(500).json({
         success: false,
@@ -594,9 +562,9 @@ const updateProfile = async (req, res) => {
 
       try {
         const userId = req.user.id;
-        
+
         console.log('Photo upload request for user:', userId);
-        console.log('Uploaded file:', req.file ? req.file.filename : 'No file');
+        console.log('Uploaded file:', req.file ? req.file.originalname : 'No file');
 
         if (!req.file) {
           return res.status(400).json({
@@ -605,20 +573,26 @@ const updateProfile = async (req, res) => {
           });
         }
 
-        // Get old user to delete old photo
+        // Get old user to delete old Cloudinary photo
         const oldUser = await prisma.user.findUnique({
           where: { id: userId }
         });
 
-        // Delete old photo if exists
-        if (oldUser.photoUrl && oldUser.photoUrl.startsWith('/uploads/')) {
-          const oldPhotoPath = path.join(__dirname, '../../../', oldUser.photoUrl);
-          safeUnlink(oldPhotoPath);
+        // Upload new photo to Cloudinary
+        let cloudinaryPublicId = null;
+        let photoUrl = null;
+        try {
+          const uploaded = await uploadToCloudinary(req.file.buffer, 'stationery_world/users');
+          photoUrl = uploaded.url;
+          cloudinaryPublicId = uploaded.publicId;
+        } catch (uploadErr) {
+          console.error('Cloudinary upload error:', uploadErr);
+          return res.status(500).json({
+            success: false,
+            message: 'Failed to upload photo to cloud storage.'
+          });
         }
 
-        // ✅ Update photo URL — saved in /uploads/users/
-        const photoUrl = `/uploads/users/${req.file.filename}`;
-        
         const updatedUser = await prisma.user.update({
           where: { id: userId },
           data: { photoUrl },
@@ -641,6 +615,11 @@ const updateProfile = async (req, res) => {
           }
         });
 
+        // Delete old Cloudinary photo after successful DB update
+        if (oldUser && oldUser.photoUrl) {
+          await deleteFromCloudinary(oldUser.photoUrl);
+        }
+
         console.log('Profile photo updated successfully:', userId);
 
         return res.status(200).json({
@@ -649,9 +628,9 @@ const updateProfile = async (req, res) => {
           data: updatedUser
         });
       } catch (error) {
-        // Delete uploaded file if database operation fails
-        safeUnlink(req.file?.path);
-        
+        // Delete newly uploaded Cloudinary image if DB operation fails
+        if (cloudinaryPublicId) await deleteFromCloudinary(cloudinaryPublicId);
+
         console.error('Update photo error:', error);
         return res.status(500).json({
           success: false,
