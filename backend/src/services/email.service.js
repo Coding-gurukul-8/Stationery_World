@@ -1,14 +1,18 @@
 const nodemailer = require('nodemailer');
 
 // Create transporter
+const emailPort = parseInt(process.env.EMAIL_PORT, 10) || 465;
 const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST,
-  port: process.env.EMAIL_PORT,
-  secure: false, // true for 465, false for other ports
+  host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+  port: emailPort,
+  secure: emailPort === 465, // true for port 465 (SSL), false for 587 (STARTTLS)
   auth: {
-   user: process.env.EMAIL_USER,
+    user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
+  connectionTimeout: 10000, // 10 seconds to establish TCP connection
+  greetingTimeout: 10000,   // 10 seconds for SMTP greeting
+  socketTimeout: 15000,     // 15 seconds for socket inactivity
 });
 
 // Send OTP Email
