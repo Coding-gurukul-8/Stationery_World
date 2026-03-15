@@ -15,6 +15,9 @@ function getTransporter() {
     secure: isSecure,
     // Force STARTTLS upgrade on port 587 / non-secure connections
     requireTLS: !isSecure,
+    // Force IPv4 to avoid ENETUNREACH errors on hosts (e.g. Render) where
+    // IPv6 routes to Gmail SMTP are unreachable.
+    family: 4,
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
