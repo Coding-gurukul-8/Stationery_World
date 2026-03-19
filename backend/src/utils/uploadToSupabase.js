@@ -6,19 +6,35 @@ const USER_BUCKET = 'users';
 const PRODUCT_BUCKET = 'products';
 
 /**
- * Upload a file buffer to Supabase Storage.
+ * Ensure the given Supabase Storage bucket exists, creating it (public) if it
+ * does not.  Errors other than "already exists" are logged as warnings but do
+ * not abort the upload — the upload itself will surface a clear error if the
+ * bucket is still missing.
  *
- * @param {Buffer} fileBuffer   - The file contents as a Buffer (from multer memoryStorage).
- * @param {string} mimeType     - MIME type of the file (e.g. 'image/jpeg').
- * @param {string} storagePath  - Destination path inside the bucket
- *                                (e.g. '42/profile.jpg' inside the 'users' bucket).
- * @param {string} bucket       - Supabase Storage bucket name (e.g. 'users' or 'products').
- * @returns {Promise<string>}   - Resolves to the public URL of the uploaded file.
+ * @param {string} bucket - Bucket name.
  */
+async function ensureBucketExists(bucket) {
+  const { error } = await supabase.storage.createBucket(bucket, { public: true });
+  // HTTP 409 Conflict means the bucket already exists — that is fine.
+  if (error && error.status !== 409) {
+    console.warn(`Warning: could not create bucket '${bucket}': ${error.message}`);
+  }
+}
+
 async function uploadToSupabase(fileBuffer, mimeType, storagePath, bucket) {
+  if (!supabase) {
+    throw new Error(
+      'Supabase client is not initialised. ' +
+      'Set the SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables.'
+    );
+  }
+
   if (!bucket) {
     throw new Error('uploadToSupabase: bucket parameter is required.');
   }
+
+  // Create the bucket if it does not exist yet (idempotent).
+  await ensureBucketExists(bucket);
 
   console.log(`Uploading to Supabase Storage — bucket: ${bucket}, path: ${storagePath}`);
 
@@ -46,6 +62,11 @@ async function uploadToSupabase(fileBuffer, mimeType, storagePath, bucket) {
  * @returns {Promise<void>}
  */
 async function deleteFromSupabase(urlOrPath, bucket) {
+  if (!supabase) {
+    console.error('deleteFromSupabase: Supabase client is not initialised, skipping delete.');
+    return;
+  }
+
   if (!bucket) {
     console.error('deleteFromSupabase: bucket parameter is required, skipping delete.');
     return;
