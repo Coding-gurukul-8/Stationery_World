@@ -1,11 +1,11 @@
 const { createClient } = require('@supabase/supabase-js');
 
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_ANON_KEY;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!supabaseUrl || !supabaseKey) {
   console.error(
-    '❌ SUPABASE_URL and SUPABASE_ANON_KEY must be set. ' +
+    '❌ SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set. ' +
     'Image uploads will fail until these environment variables are provided.'
   );
 }

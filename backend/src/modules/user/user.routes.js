@@ -136,34 +136,5 @@ router.put('/:id', authMiddleware, adminMiddleware, async (req, res, next) => {
   }
 });
 
-const multer = require('multer');
-const path = require('path');
-
-const userStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, 'uploads/users/');
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, 'user-' + uniqueSuffix + path.extname(file.originalname));
-  }
-});
-
-const userUpload = multer({
-  storage: userStorage,
-  limits: { fileSize: 2 * 1024 * 1024 }, // 2MB
-  fileFilter: (req, file, cb) => {
-    const filetypes = /jpeg|jpg|png|gif/;
-    const mimetype = filetypes.test(file.mimetype);
-    const extname = filetypes.test(path.extname(file.originalname).toLowerCase());
-    
-    if (mimetype && extname) return cb(null, true);
-    cb(new Error('Only image files are allowed!'));
-  }
-
-  
-});
-
-router.post('/signup', userUpload.single('photo'), signup);
 
 module.exports = router;
