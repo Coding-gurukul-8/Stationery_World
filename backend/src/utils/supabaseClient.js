@@ -10,6 +10,11 @@ if (!supabaseUrl || !supabaseKey) {
   );
 }
 
-const supabase = createClient(supabaseUrl || '', supabaseKey || '');
+// Only initialise the client when both variables are available.
+// Passing an empty string to createClient causes the Supabase library to
+// throw "supabaseKey is required." at import time, which crashes the server.
+const supabase = (supabaseUrl && supabaseKey)
+  ? createClient(supabaseUrl, supabaseKey)
+  : null;
 
 module.exports = supabase;
