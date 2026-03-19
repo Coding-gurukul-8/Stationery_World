@@ -1,25 +1,16 @@
 const supabase = require('./supabaseClient');
 
 // Dedicated Supabase Storage buckets.
-// Create these buckets in your Supabase Storage dashboard and set them to Public.
+// ✅ IMPORTANT: Create these buckets MANUALLY in your Supabase Storage dashboard
+// and configure RLS policies (see SUPABASE_SETUP_GUIDE.md)
 const USER_BUCKET = 'users';
 const PRODUCT_BUCKET = 'products';
 
 /**
- * Ensure the given Supabase Storage bucket exists, creating it (public) if it
- * does not.  Errors other than "already exists" are logged as warnings but do
- * not abort the upload — the upload itself will surface a clear error if the
- * bucket is still missing.
- *
- * @param {string} bucket - Bucket name.
+ * ✅ REMOVED AUTOMATIC BUCKET CREATION
+ * Buckets should be created manually in Supabase dashboard with proper RLS policies.
+ * This prevents RLS policy errors during runtime.
  */
-async function ensureBucketExists(bucket) {
-  const { error } = await supabase.storage.createBucket(bucket, { public: true });
-  // HTTP 409 Conflict means the bucket already exists — that is fine.
-  if (error && error.status !== 409) {
-    console.warn(`Warning: could not create bucket '${bucket}': ${error.message}`);
-  }
-}
 
 async function uploadToSupabase(fileBuffer, mimeType, storagePath, bucket) {
   if (!supabase) {
@@ -33,25 +24,51 @@ async function uploadToSupabase(fileBuffer, mimeType, storagePath, bucket) {
     throw new Error('uploadToSupabase: bucket parameter is required.');
   }
 
-  // Create the bucket if it does not exist yet (idempotent).
-  await ensureBucketExists(bucket);
-
   console.log(`Uploading to Supabase Storage — bucket: ${bucket}, path: ${storagePath}`);
 
-  const { error } = await supabase.storage
+  // ✅ FIXED: Upload with upsert and better error handling
+  const { data, error } = await supabase.storage
     .from(bucket)
     .upload(storagePath, fileBuffer, {
       contentType: mimeType,
-      upsert: true
+      upsert: true,
+      cacheControl: '3600'
     });
 
   if (error) {
+    // ✅ ENHANCED: Better error messages
+    console.error(`❌ Supabase upload error (bucket: ${bucket}, path: ${storagePath}):`, error);
+    
+    // Check for common errors
+    if (error.message.includes('row-level security')) {
+      throw new Error(
+        `Supabase Storage RLS policy error. ` +
+        `Please ensure bucket '${bucket}' exists and has proper RLS policies configured. ` +
+        `See SUPABASE_SETUP_GUIDE.md for setup instructions. ` +
+        `Error: ${error.message}`
+      );
+    }
+    
+    if (error.message.includes('not found') || error.message.includes('does not exist')) {
+      throw new Error(
+        `Supabase Storage bucket '${bucket}' does not exist. ` +
+        `Please create it manually in your Supabase dashboard. ` +
+        `Error: ${error.message}`
+      );
+    }
+    
     throw new Error(`Supabase Storage upload failed (bucket: ${bucket}): ${error.message}`);
   }
 
-  const { data } = supabase.storage.from(bucket).getPublicUrl(storagePath);
-  console.log(`Upload successful — public URL: ${data.publicUrl}`);
-  return data.publicUrl;
+  // ✅ FIXED: Get public URL
+  const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(storagePath);
+  
+  if (!urlData || !urlData.publicUrl) {
+    throw new Error(`Failed to get public URL for uploaded file: ${storagePath}`);
+  }
+  
+  console.log(`✅ Upload successful — public URL: ${urlData.publicUrl}`);
+  return urlData.publicUrl;
 }
 
 /**
@@ -84,9 +101,13 @@ async function deleteFromSupabase(urlOrPath, bucket) {
       }
     }
 
+    console.log(`Deleting from Supabase Storage — bucket: ${bucket}, path: ${storagePath}`);
+    
     const { error } = await supabase.storage.from(bucket).remove([storagePath]);
     if (error) {
-      console.error(`Supabase Storage delete error (bucket: ${bucket}):`, error.message);
+      console.error(`❌ Supabase Storage delete error (bucket: ${bucket}):`, error.message);
+    } else {
+      console.log(`✅ Delete successful — bucket: ${bucket}, path: ${storagePath}`);
     }
   } catch (e) {
     console.error('deleteFromSupabase error:', e.message);
