@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const path = require('path');
+const rateLimit = require('express-rate-limit');
 const {
   getAllProducts,
   getProductById,
@@ -36,8 +37,17 @@ const upload = multer({
   }
 });
 
+// Rate limiter for the image-upload endpoint — 30 requests per minute per IP.
+const uploadRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many upload requests. Please wait a moment and try again.' }
+});
+
 // Image upload route
-router.post('/upload-images', authMiddleware, adminMiddleware, upload.array('images', 6), async (req, res) => {
+router.post('/upload-images', uploadRateLimiter, authMiddleware, adminMiddleware, upload.array('images', 6), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({
