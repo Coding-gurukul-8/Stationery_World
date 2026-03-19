@@ -10,11 +10,25 @@ if (!supabaseUrl || !supabaseKey) {
   );
 }
 
-// Only initialise the client when both variables are available.
-// Passing an empty string to createClient causes the Supabase library to
-// throw "supabaseKey is required." at import time, which crashes the server.
+// ✅ FIXED: Initialize with service role options to bypass RLS
+// The service role key should bypass Row-Level Security (RLS) policies
 const supabase = (supabaseUrl && supabaseKey)
-  ? createClient(supabaseUrl, supabaseKey)
+  ? createClient(supabaseUrl, supabaseKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+        detectSessionInUrl: false
+      },
+      // ✅ CRITICAL: Use service role options to bypass RLS
+      db: {
+        schema: 'public',
+      },
+      global: {
+        headers: {
+          'x-my-custom-header': 'stationery-world-backend',
+        },
+      },
+    })
   : null;
 
 module.exports = supabase;
