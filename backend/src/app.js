@@ -1,9 +1,6 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
 
 // Suppress non-error console output by default.
 // Set SUPPRESS_LOGS=false to restore console.log behavior.
@@ -31,22 +28,6 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ===========================
-// CREATE UPLOADS DIRECTORIES
-// ===========================
-const uploadsDir = path.join(__dirname, '..', 'uploads');
-const productsUploadDir = path.join(uploadsDir, 'products');
-
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-  console.log('✅ Created uploads directory:', uploadsDir);
-}
-
-if (!fs.existsSync(productsUploadDir)) {
-  fs.mkdirSync(productsUploadDir, { recursive: true });
-  console.log('✅ Created products upload directory:', productsUploadDir);
-}
-
-// ===========================
 // MIDDLEWARE
 // ===========================
 
@@ -55,9 +36,6 @@ app.use(cors({
   origin: true,
   credentials: true
 }));
-
-// Serve static files (uploaded images)
-app.use('/uploads', express.static(uploadsDir));
 
 // Body parser middleware - MUST BE BEFORE ROUTES
 app.use(express.json());
@@ -224,8 +202,6 @@ app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Health check: http://localhost:${PORT}/health`);
-  console.log(`Uploads directory: ${uploadsDir}`);
-  console.log(`Products upload directory: ${productsUploadDir}`);
   console.log('=================================');
   console.log('');
   console.log('📦 Modules Loaded:');
