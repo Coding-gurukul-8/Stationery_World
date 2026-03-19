@@ -3,43 +3,21 @@ const jwt = require('jsonwebtoken');
 const prisma = require('../../../prisma/client');
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs');
 const { sendOTPEmail } = require('../../services/email.service');
 const { validatePassword, getPasswordRequirementsText } = require('../../utils/passwordValidator');
 const crypto = require('crypto');
+const { uploadToSupabase, deleteFromSupabase, userPhotoPath } = require('../../utils/uploadToSupabase');
 
 // ===========================
 // MULTER CONFIGURATION
 // ===========================
 
-// Ensure upload directories exist on startup
-const uploadsDir = path.join(__dirname, '../../../uploads');
-const usersUploadDir = path.join(uploadsDir, 'users');
-
-[uploadsDir, usersUploadDir].forEach((dir) => {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-    console.log('✅ Created upload directory:', dir);
-  }
-});
-
-// ✅ Storage engine — saves profile photos to /uploads/users/
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, usersUploadDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, 'user-' + uniqueSuffix + path.extname(file.originalname).toLowerCase());
-  }
-});
-
-// File filter
+// File filter — allow common image formats only.
 const fileFilter = (req, file, cb) => {
   const allowedTypes = /jpeg|jpg|png|gif|webp/;
   const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
   const mimetype = allowedTypes.test(file.mimetype);
-  
+
   if (mimetype && extname) {
     return cb(null, true);
   } else {
@@ -47,25 +25,15 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
-// Multer instance
+// Multer instance — memory storage so files never touch the local filesystem.
+// Files are uploaded directly to Supabase Storage as Buffers.
 const upload = multer({
-  storage: storage,
+  storage: multer.memoryStorage(),
   limits: {
     fileSize: 5 * 1024 * 1024 // 5MB limit
   },
   fileFilter: fileFilter
 }).single('photo'); // 'photo' is the field name from frontend
-
-// ===========================
-// HELPER: safe file delete
-// ===========================
-const safeUnlink = (filePath) => {
-  try {
-    if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
-  } catch (e) {
-    console.error('safeUnlink error:', e.message);
-  }
-};
 
 // ===========================
 // SIGNUP CONTROLLER
@@ -95,7 +63,7 @@ const signup = async (req, res) => {
     try {
       console.log('Signup request received');
       console.log('Request body:', { ...req.body, password: '[HIDDEN]' });
-      console.log('Uploaded file:', req.file ? req.file.filename : 'No file uploaded');
+      console.log('Uploaded file:', req.file ? req.file.originalname : 'No file uploaded');
 
       const {
         name,
@@ -132,7 +100,6 @@ const signup = async (req, res) => {
       // ✅ Password strength — shared validator
       const pwCheck = validatePassword(password);
       if (!pwCheck.isValid) {
-        safeUnlink(req.file?.path);
         return res.status(400).json({
           success: false,
           message: 'Password does not meet security requirements.',
@@ -147,9 +114,6 @@ const signup = async (req, res) => {
       });
 
       if (existingUser) {
-        // Delete uploaded file if user already exists
-        safeUnlink(req.file?.path);
-        
         return res.status(409).json({
           success: false,
           message: 'User with this email already exists.'
@@ -163,9 +127,6 @@ const signup = async (req, res) => {
         });
 
         if (existingPhone) {
-          // Delete uploaded file if phone already exists
-          safeUnlink(req.file?.path);
-          
           return res.status(409).json({
             success: false,
             message: 'User with this phone number already exists.'
@@ -180,10 +141,9 @@ const signup = async (req, res) => {
       // Determine user role (default to CUSTOMER)
       const userRole = role === 'ADMIN' ? 'ADMIN' : 'CUSTOMER';
 
-      // ✅ Photo URL — saved in /uploads/users/ subdirectory
-      const photoUrl = req.file ? `/uploads/users/${req.file.filename}` : null;
-
-      // Create user with optional profile fields
+      // Create the user record first (no photo yet).
+      // This ensures that a Supabase upload failure never orphans a file that
+      // belongs to a non-existent user.
       const newUser = await prisma.user.create({
         data: {
           name: name.trim(),
@@ -197,7 +157,7 @@ const signup = async (req, res) => {
           state: state ? String(state).trim() : null,
           postalCode: postalCode ? String(postalCode).trim() : null,
           country: country ? String(country).trim() : null,
-          photoUrl: photoUrl
+          photoUrl: null
         },
         select: {
           id: true,
@@ -220,6 +180,21 @@ const signup = async (req, res) => {
 
       console.log('User created successfully:', newUser.id);
 
+      // Upload profile photo to Supabase Storage now that we have the userId.
+      // Using the userId in the path avoids temporary/orphaned files.
+      if (req.file) {
+        try {
+          const storagePath = userPhotoPath(newUser.id, req.file.originalname);
+          const photoUrl = await uploadToSupabase(req.file.buffer, req.file.mimetype, storagePath);
+
+          await prisma.user.update({ where: { id: newUser.id }, data: { photoUrl } });
+          newUser.photoUrl = photoUrl;
+        } catch (uploadErr) {
+          console.error('Profile photo upload failed during signup:', uploadErr.message);
+          // Non-fatal — user was created successfully; they can add a photo later.
+        }
+      }
+
       // ✅ Generate JWT immediately — auto-login after signup
       const token = jwt.sign(
         { userId: newUser.id, email: newUser.email, role: newUser.role },
@@ -233,9 +208,6 @@ const signup = async (req, res) => {
         data: { user: newUser, token }
       });
     } catch (error) {
-      // Delete uploaded file if database operation fails
-      safeUnlink(req.file?.path);
-      
       console.error('Signup error:', error);
       return res.status(500).json({
         success: false,
@@ -596,7 +568,7 @@ const updateProfile = async (req, res) => {
         const userId = req.user.id;
         
         console.log('Photo upload request for user:', userId);
-        console.log('Uploaded file:', req.file ? req.file.filename : 'No file');
+        console.log('Uploaded file:', req.file ? req.file.originalname : 'No file');
 
         if (!req.file) {
           return res.status(400).json({
@@ -605,20 +577,15 @@ const updateProfile = async (req, res) => {
           });
         }
 
-        // Get old user to delete old photo
+        // Get old user so we can delete the previous Supabase photo.
         const oldUser = await prisma.user.findUnique({
           where: { id: userId }
         });
 
-        // Delete old photo if exists
-        if (oldUser.photoUrl && oldUser.photoUrl.startsWith('/uploads/')) {
-          const oldPhotoPath = path.join(__dirname, '../../../', oldUser.photoUrl);
-          safeUnlink(oldPhotoPath);
-        }
+        // Upload new photo to Supabase Storage.
+        const storagePath = userPhotoPath(userId, req.file.originalname);
+        const photoUrl = await uploadToSupabase(req.file.buffer, req.file.mimetype, storagePath);
 
-        // ✅ Update photo URL — saved in /uploads/users/
-        const photoUrl = `/uploads/users/${req.file.filename}`;
-        
         const updatedUser = await prisma.user.update({
           where: { id: userId },
           data: { photoUrl },
@@ -641,6 +608,15 @@ const updateProfile = async (req, res) => {
           }
         });
 
+        // Remove the old photo from Supabase Storage (best-effort, fire-and-forget).
+        // This runs after the DB update so the new URL is already stored; any client
+        // that fetches the profile now will receive the updated URL.  If the delete
+        // fails (e.g. network error) the orphaned file is a minor storage concern but
+        // does not affect application correctness.
+        if (oldUser.photoUrl && oldUser.photoUrl.startsWith('http')) {
+          deleteFromSupabase(oldUser.photoUrl).catch(() => {});
+        }
+
         console.log('Profile photo updated successfully:', userId);
 
         return res.status(200).json({
@@ -649,9 +625,6 @@ const updateProfile = async (req, res) => {
           data: updatedUser
         });
       } catch (error) {
-        // Delete uploaded file if database operation fails
-        safeUnlink(req.file?.path);
-        
         console.error('Update photo error:', error);
         return res.status(500).json({
           success: false,
