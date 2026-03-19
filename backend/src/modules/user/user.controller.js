@@ -6,7 +6,7 @@ const path = require('path');
 const { sendOTPEmail } = require('../../services/email.service');
 const { validatePassword, getPasswordRequirementsText } = require('../../utils/passwordValidator');
 const crypto = require('crypto');
-const { uploadToSupabase, deleteFromSupabase, userPhotoPath } = require('../../utils/uploadToSupabase');
+const { uploadToSupabase, deleteFromSupabase, userPhotoPath, USER_BUCKET } = require('../../utils/uploadToSupabase');
 
 // ===========================
 // MULTER CONFIGURATION
@@ -184,8 +184,8 @@ const signup = async (req, res) => {
       // Using the userId in the path avoids temporary/orphaned files.
       if (req.file) {
         try {
-          const storagePath = userPhotoPath(newUser.id, req.file.originalname);
-          const photoUrl = await uploadToSupabase(req.file.buffer, req.file.mimetype, storagePath);
+          const storagePath = userPhotoPath(newUser.id);
+          const photoUrl = await uploadToSupabase(req.file.buffer, req.file.mimetype, storagePath, USER_BUCKET);
 
           await prisma.user.update({ where: { id: newUser.id }, data: { photoUrl } });
           newUser.photoUrl = photoUrl;
@@ -583,8 +583,8 @@ const updateProfile = async (req, res) => {
         });
 
         // Upload new photo to Supabase Storage.
-        const storagePath = userPhotoPath(userId, req.file.originalname);
-        const photoUrl = await uploadToSupabase(req.file.buffer, req.file.mimetype, storagePath);
+        const storagePath = userPhotoPath(userId);
+        const photoUrl = await uploadToSupabase(req.file.buffer, req.file.mimetype, storagePath, USER_BUCKET);
 
         const updatedUser = await prisma.user.update({
           where: { id: userId },
@@ -614,7 +614,7 @@ const updateProfile = async (req, res) => {
         // fails (e.g. network error) the orphaned file is a minor storage concern but
         // does not affect application correctness.
         if (oldUser.photoUrl && oldUser.photoUrl.startsWith('http')) {
-          deleteFromSupabase(oldUser.photoUrl).catch(() => {});
+          deleteFromSupabase(oldUser.photoUrl, USER_BUCKET).catch(() => {});
         }
 
         console.log('Profile photo updated successfully:', userId);

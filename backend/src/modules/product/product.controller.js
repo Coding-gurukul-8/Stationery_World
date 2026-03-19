@@ -542,7 +542,10 @@ const updateProduct = async (req, res) => {
 
     // -- images handling --
     if (hasImages) {
-      const validImageUrls = images.filter(url => typeof url === 'string' && url.startsWith('/uploads/products/'));
+      // Accept Supabase Storage HTTPS URLs only.  Any URL that does not start with
+      // 'https://' is silently discarded to prevent path-traversal or injection via
+      // locally-crafted values.
+      const validImageUrls = images.filter(url => typeof url === 'string' && url.startsWith('https://'));
       if (validImageUrls.length > 0) {
         await prisma.$transaction([
           prisma.productImage.deleteMany({ where: { productId } }),
