@@ -5,7 +5,7 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   // Dev proxy: forward /api calls to backend at :3000 so Vite doesn't return index.html (which causes JSON parse errors)
-  base: process.env.VITE_BASE_PATH || "/react-vite-deploy",
+  base: process.env.VITE_BASE_PATH || "/react-vite-deploy/",
   server: {
     proxy: {
       '/api': {
