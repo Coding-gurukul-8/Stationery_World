@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { authUtils } from '../../utils/auth';
 import './Inventory.css';
 import { API_BASE_URL } from '../../config/constants';
+import { compressImageFile, isSupportedImageType } from '../../utils/imageCompression';
 
 const DEFAULT_CATEGORIES = ['STATIONERY', 'BOOKS', 'TOYS'];
 const API = API_BASE_URL;
@@ -401,16 +402,51 @@ export default function Inventory() {
   const [selectedFiles,  setSelectedFiles]  = useState([]);
   const [filePreviews,   setFilePreviews]   = useState([]);
   const [existingImages, setExistingImages] = useState([]);
+  const [fileMessage,    setFileMessage]    = useState({ type: '', text: '' });
+  const [isCompressing,  setIsCompressing]  = useState(false);
   const [tab,            setTab]            = useState('add');
   const [inventoryList,  setInventoryList]  = useState([]);
   const [lowList,        setLowList]        = useState([]);
 
   /* ── file handling ── */
-  function handleFileChange(e) {
+  async function handleFileChange(e) {
     const files = Array.from(e.target.files || []).slice(0, 6);
-    setSelectedFiles(files);
-    filePreviews.forEach(p => URL.revokeObjectURL(p.url));
-    setFilePreviews(files.map(f => ({ url: URL.createObjectURL(f), name: f.name })));
+
+    if (!files.length) return;
+
+    setFileMessage({ type: '', text: '' });
+    setIsCompressing(true);
+
+    try {
+      const compressedList = [];
+      const previewList = [];
+
+      for (const file of files) {
+        if (!isSupportedImageType(file)) {
+          throw new Error(`Invalid file type for ${file.name}. Only JPG/PNG/WEBP are allowed.`);
+        }
+
+        const compressed = await compressImageFile(file, {
+          maxSizeKB: 200,
+          minSizeKB: 100,
+          maxWidthOrHeight: 1800
+        });
+
+        compressedList.push(compressed);
+        previewList.push({ url: URL.createObjectURL(compressed), name: compressed.name });
+      }
+
+      filePreviews.forEach(p => URL.revokeObjectURL(p.url));
+
+      setSelectedFiles(compressedList);
+      setFilePreviews(previewList);
+      setFileMessage({ type: 'success', text: `Compressed ${compressedList.length} image(s) successfully.` });
+    } catch (error) {
+      console.error('Product image compress failed:', error);
+      setFileMessage({ type: 'error', text: error.message || 'Image compression failed' });
+    } finally {
+      setIsCompressing(false);
+    }
   }
   function removeSelectedFile(idx) {
     const nf = selectedFiles.slice(); const np = filePreviews.slice();
@@ -857,7 +893,13 @@ export default function Inventory() {
                     }}>+ Add rule</button>
 
                     <label>Product Images (max 6)</label>
-                    <input type="file" accept="image/*" multiple onChange={handleFileChange} style={{ border: 'none', padding: '6px 0', background: 'transparent' }} />
+                    <input type="file" accept="image/jpeg,image/jpg,image/png,image/webp" multiple onChange={handleFileChange} style={{ border: 'none', padding: '6px 0', background: 'transparent' }} />
+                    {isCompressing && (
+                      <p style={{ marginTop: 8, color: '#0c5460' }}>Compressing images, please wait…</p>
+                    )}
+                    {fileMessage.text && (
+                      <p style={{ marginTop: 8, color: fileMessage.type === 'error' ? '#721c24' : '#155724', backgroundColor: fileMessage.type === 'error' ? '#f8d7da' : '#d4edda', padding: '8px', borderRadius: 6 }}>{fileMessage.text}</p>
+                    )}
                     {filePreviews.length > 0 && (
                       <div className="image-preview">
                         {filePreviews.map((p, idx) => (

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { authUtils } from '../../utils/auth';
 import { Edit2, Camera, Save, X } from 'lucide-react';
 import { API_BASE_URL } from '../../config/constants';
+import { compressImageFile, isSupportedImageType } from '../../utils/imageCompression';
 
 const DEFAULT_AVATAR = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='150' viewBox='0 0 150 150'%3E%3Ccircle cx='75' cy='75' r='75' fill='%23dc3545'/%3E%3Cpath d='M75 40c-11 0-20 9-20 20s9 20 20 20 20-9 20-20-9-20-20-20zm0 60c-16.5 0-30 8.5-30 19v6h60v-6c0-10.5-13.5-19-30-19z' fill='%23fff'/%3E%3C/svg%3E";
 
@@ -55,31 +56,42 @@ export default function AdminProfile() {
   };
 
   // Handle photo selection
-  const handlePhotoChange = (e) => {
+  const handlePhotoChange = async (e) => {
     const file = e.target.files[0];
-    
-    if (file) {
-      // Validate file type
-      if (!file.type.startsWith('image/')) {
-        setMessage({ type: 'error', text: 'Please select an image file' });
-        return;
-      }
-      
-      // Validate file size (max 5MB)
-      if (file.size > 5 * 1024 * 1024) {
-        setMessage({ type: 'error', text: 'Image size should be less than 5MB' });
-        return;
-      }
-      
-      setNewPhoto(file);
-      
-      // Create preview
+
+    if (!file) return;
+
+    if (!isSupportedImageType(file)) {
+      setMessage({ type: 'error', text: 'Invalid file type. Only JPG, PNG, and WEBP are allowed.' });
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setMessage({ type: 'error', text: 'Image size should be less than 5MB' });
+      return;
+    }
+
+    setMessage({ type: '', text: '' });
+    setLoading(true);
+
+    try {
+      const compressedPhoto = await compressImageFile(file, { maxSizeKB: 100, maxWidthOrHeight: 1280 });
+      setNewPhoto(compressedPhoto);
+
       const reader = new FileReader();
       reader.onloadend = () => {
         setPhotoPreview(reader.result);
       };
-      reader.readAsDataURL(file);
-      setMessage({ type: '', text: '' });
+      reader.readAsDataURL(compressedPhoto);
+
+      setMessage({ type: 'success', text: `Image compressed from ${Math.round(file.size / 1024)}KB to ${Math.round(compressedPhoto.size / 1024)}KB` });
+    } catch (error) {
+      console.error('Photo compression failed:', error);
+      setMessage({ type: 'error', text: error.message || 'Image compression failed' });
+      setNewPhoto(null);
+      setPhotoPreview(null);
+    } finally {
+      setLoading(false);
     }
   };
 
