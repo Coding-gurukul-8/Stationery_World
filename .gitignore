@@ -1,6 +1,9 @@
 # Node modules
 **/node_modules/
 
+# Local upload directory (legacy — images are now stored in Supabase Storage)
+backend/uploads/
+
 # Logs
 npm-debug.log*
 yarn-debug.log*
