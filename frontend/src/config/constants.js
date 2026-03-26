@@ -1,5 +1,24 @@
 // API Configuration
-export const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://stationery-world.onrender.com';
+const RENDER_API_URL = 'https://stationery-world.onrender.com';
+const envApiUrl = import.meta.env.VITE_API_URL;
+const LOCALHOST_HOSTNAMES = ['localhost', '127.0.0.1'];
+
+const shouldUseRenderUrl = (() => {
+  if (!envApiUrl) return true;
+
+  try {
+    const configured = new URL(envApiUrl);
+    const runningOnLocalhost =
+      typeof window !== 'undefined' &&
+      LOCALHOST_HOSTNAMES.includes(window.location.hostname);
+
+    return LOCALHOST_HOSTNAMES.includes(configured.hostname) && !runningOnLocalhost;
+  } catch {
+    return true;
+  }
+})();
+
+export const API_BASE_URL = shouldUseRenderUrl ? RENDER_API_URL : (envApiUrl || RENDER_API_URL);
 
 // API Endpoints
 export const API_ENDPOINTS = {
