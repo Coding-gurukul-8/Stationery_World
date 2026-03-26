@@ -1,15 +1,17 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+const backendTarget = 'https://stationery-world.onrender.com'
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
-  // Dev proxy: forward /api calls to backend at :3000 so Vite doesn't return index.html (which causes JSON parse errors)
+  // Dev proxy: forward /api calls to backend so Vite doesn't return index.html (which causes JSON parse errors)
   base: "/",
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:3000',
+        target: backendTarget,
         changeOrigin: true,
         secure: false
       }
