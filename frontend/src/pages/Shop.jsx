@@ -11,6 +11,7 @@ import '../../Style/shop.css';
 import { API_BASE_URL } from '../config/constants';
 
 const API = API_BASE_URL;
+const PAGE_LIMIT = 20;
 
 export default function Shop() {
   const [products, setProducts] = useState([]);
@@ -22,6 +23,8 @@ export default function Shop() {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [activeSearch, setActiveSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState({ page: 1, limit: PAGE_LIMIT, total: 0, totalPages: 1 });
 
   const { showToast } = useToast();
   const [wishlistIds, setWishlistIds] = useState(new Set());
@@ -41,7 +44,9 @@ export default function Shop() {
   useEffect(() => {
     setSelectedCategory('All');
     setSortBy('featured');
+    setSearchQuery('');
     setActiveSearch('');
+    setPage(1);
     clearSearch();
   }, [location.key, clearSearch]);
 
@@ -56,25 +61,23 @@ export default function Shop() {
   }, []);
 
   useEffect(() => {
-    fetchProducts();
     fetchWishlistIds();
-  }, []);
+  }, [fetchWishlistIds]);
 
   // Topbar search: dropdown as you type
   useEffect(() => {
     const searchProducts = async (query) => {
-      const words = query.toLowerCase().trim().split(/\s+/);
-      return products
-        .filter(p =>
-          words.some(w =>
-            p.name.toLowerCase().includes(w) ||
-            p.description?.toLowerCase().includes(w) ||
-            p.category.toLowerCase().includes(w) ||
-            p.subCategory?.toLowerCase().includes(w) ||
-            p.keywords?.some(k => k.toLowerCase().includes(w))
-          )
-        )
-        .slice(0, 8)
+      const trimmed = query.trim();
+      if (!trimmed) return [];
+      const params = new URLSearchParams({
+        search: trimmed,
+        page: '1',
+        limit: '8'
+      });
+      const response = await fetch(`${API}/api/products/customer/search?${params.toString()}`);
+      const result = await response.json();
+      const list = result?.success ? (result.data || []) : [];
+      return list
         .map(p => ({
           id: p.id,
           title: p.name,
@@ -102,43 +105,31 @@ export default function Shop() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [topbarQuery]);
 
-  const fetchProducts = async () => {
+  const fetchProducts = async ({ currentPage = 1, searchTerm = '', category = 'All' } = {}) => {
     try {
       setLoading(true);
-      const token = localStorage.getItem('token');
-      const url = token
-        ? `${API}/api/products/recommended?limit=20`
-        : `${API}/api/products`;
-
-      const response = await fetch(url, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      const params = new URLSearchParams({
+        page: String(currentPage),
+        limit: String(PAGE_LIMIT)
       });
+      if (category !== 'All') {
+        params.set('category', category);
+      }
+      const trimmedSearch = searchTerm.trim();
+      const endpoint = trimmedSearch ? '/api/products/customer/search' : '/api/products/customer';
+      if (trimmedSearch) {
+        params.set('search', trimmedSearch);
+      }
+
+      const response = await fetch(`${API}${endpoint}?${params.toString()}`);
       const result = await response.json();
 
       if (!result.success) {
-        // If recommendations fail (invalid/expired token), fall back to public products
-        if (token) {
-          const fallbackRes = await fetch(`${API}/api/products`);
-          const fallbackResult = await fallbackRes.json();
-
-          if (!fallbackResult.success) {
-            throw new Error(fallbackResult.message);
-          }
-
-          const activeProducts = (fallbackResult.data || []).filter(p => p.isActive);
-          const shuffled = activeProducts.sort(() => Math.random() - 0.5);
-          setProducts(shuffled.slice(0, 20));
-          setError(null);
-          return;
-        }
-
         throw new Error(result.message);
       }
 
-      const activeProducts = (result.data || []).filter(p => p.isActive);
-      // show a randomized subset of 20 products each time when not using recommended endpoint
-      const finalList = token ? activeProducts : activeProducts.sort(() => Math.random() - 0.5);
-      setProducts(finalList.slice(0, 20));
+      setProducts(result.data || []);
+      setPagination(result.pagination || { page: currentPage, limit: PAGE_LIMIT, total: (result.data || []).length, totalPages: 1 });
       setError(null);
     } catch (err) {
       console.error('Error fetching products:', err);
@@ -149,27 +140,8 @@ export default function Shop() {
     }
   };
 
-  const filteredProducts = useMemo(() => {
-    let filtered = [...products];
-
-    if (selectedCategory !== 'All') {
-      filtered = filtered.filter(p => p.category === selectedCategory);
-    }
-
-    if (activeSearch || searchQuery.trim()) {
-      const query = (activeSearch || searchQuery).toLowerCase().trim();
-      const words = query.split(/\s+/);
-      filtered = filtered.filter(p =>
-        words.some(w =>
-          p.name.toLowerCase().includes(w) ||
-          p.description?.toLowerCase().includes(w) ||
-          p.category.toLowerCase().includes(w) ||
-          p.subCategory?.toLowerCase().includes(w) ||
-          p.keywords?.some(k => k.toLowerCase().includes(w))
-        )
-      );
-    }
-
+  const visibleProducts = useMemo(() => {
+    const filtered = [...products];
     switch (sortBy) {
       case 'price-low':
         filtered.sort((a, b) => parseFloat(a.baseSellingPrice) - parseFloat(b.baseSellingPrice));
@@ -186,15 +158,27 @@ export default function Shop() {
       default:
         break;
     }
-
     return filtered;
-  }, [products, selectedCategory, activeSearch, searchQuery, sortBy]);
+  }, [products, sortBy]);
 
   const featuredProduct = useMemo(() => {
     return products.find(p => p.totalStock > 0) || products[0];
   }, [products]);
 
   const clearActiveSearch = () => { setActiveSearch(''); clearSearch(); };
+
+  useEffect(() => {
+    fetchProducts({ currentPage: page, searchTerm: activeSearch, category: selectedCategory });
+  }, [page, activeSearch, selectedCategory]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const trimmed = searchQuery.trim();
+      setPage(1);
+      setActiveSearch(trimmed);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   // ✅ FIX: Use useCallback to stabilize the function
   const handleAddToCart = useCallback(async (product) => {
@@ -367,10 +351,10 @@ export default function Shop() {
           <div className="active-search-banner">
             <Search size={15} />
             Results for <strong className="active-search-term">"{activeSearch}"</strong>
-            &nbsp;— {filteredProducts.length} match{filteredProducts.length !== 1 ? 'es' : ''}
+            &nbsp;— {pagination.total} match{pagination.total !== 1 ? 'es' : ''}
             <button
               className="active-search-clear"
-              onClick={clearActiveSearch}
+              onClick={() => { clearActiveSearch(); setSearchQuery(''); setPage(1); }}
             >
               <X size={13} /> Clear
             </button>
@@ -389,7 +373,14 @@ export default function Shop() {
               <input 
                 placeholder="Search products..." 
                 value={searchQuery} 
-                onChange={e => setSearchQuery(e.target.value)} 
+                onChange={e => {
+                  const nextValue = e.target.value;
+                  setSearchQuery(nextValue);
+                  if (!nextValue.trim()) {
+                    setActiveSearch('');
+                    setPage(1);
+                  }
+                }} 
               />
             </div>
 
@@ -407,12 +398,12 @@ export default function Shop() {
           </div>
         </div>
 
-        {filteredProducts.length === 0 ? (
+        {visibleProducts.length === 0 ? (
           <div className="no-products">
             <h3>No products found</h3>
             <p>{activeSearch ? `No matches for "${activeSearch}"` : 'Try adjusting your search or filters'}</p>
             {activeSearch && (
-              <button className="btn primary mt-16" onClick={clearActiveSearch}>
+              <button className="btn primary mt-16" onClick={() => { clearActiveSearch(); setSearchQuery(''); setPage(1); }}>
                 Show all products
               </button>
             )}
@@ -420,18 +411,37 @@ export default function Shop() {
         ) : (
           <>
             <div className="products-count">
-              Showing {filteredProducts.length} {filteredProducts.length === 1 ? 'product' : 'products'}
+              Showing {visibleProducts.length} of {pagination.total} {pagination.total === 1 ? 'product' : 'products'}
               {activeSearch && ` for "${activeSearch}"`}
             </div>
 
             <ProductGrid
-              products={filteredProducts}
+              products={visibleProducts}
               onAddToCart={handleAddToCart}
               onToggleWishlist={handleToggleWishlist}
               onViewProduct={handleViewProduct}
               onBuyNow={handleBuyNow}
               wishlistIds={wishlistIds}
             />
+            <div className="shop-toolbar" style={{ marginTop: 12 }}>
+              <button
+                className="btn outline"
+                disabled={pagination.page <= 1 || loading}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                Previous
+              </button>
+              <div className="products-count" style={{ margin: 0 }}>
+                Page {pagination.page} of {pagination.totalPages}
+              </div>
+              <button
+                className="btn outline"
+                disabled={pagination.page >= pagination.totalPages || loading}
+                onClick={() => setPage((p) => Math.min(pagination.totalPages, p + 1))}
+              >
+                Next
+              </button>
+            </div>
           </>
         )}
       </div>

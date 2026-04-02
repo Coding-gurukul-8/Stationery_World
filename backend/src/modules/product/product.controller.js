@@ -1,4 +1,5 @@
 const prisma = require('../../../prisma/client');
+const { Prisma } = require('@prisma/client');
 
 // Valid categories enum
 const VALID_CATEGORIES = ['STATIONERY', 'BOOKS', 'TOYS'];
@@ -14,6 +15,130 @@ const productInclude = {
       role: true
     }
   }
+};
+
+const CUSTOMER_DEFAULT_LIMIT = 20;
+const CUSTOMER_MAX_LIMIT = 50;
+
+const parseIntegerQueryParam = (value, { name, min = 1, max = Number.MAX_SAFE_INTEGER, defaultValue } = {}) => {
+  if (value === undefined || value === null || value === '') return defaultValue;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+    const rangeMsg = max === Number.MAX_SAFE_INTEGER ? `>= ${min}` : `${min}-${max}`;
+    throw new Error(`Invalid "${name}" query param. Expected integer in range ${rangeMsg}.`);
+  }
+  return parsed;
+};
+
+const parseFloatQueryParam = (value, { name } = {}) => {
+  if (value === undefined || value === null || value === '') return undefined;
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`Invalid "${name}" query param. Expected a non-negative number.`);
+  }
+  return parsed;
+};
+
+const parseBooleanQueryParam = (value, { name } = {}) => {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  throw new Error(`Invalid "${name}" query param. Use "true" or "false".`);
+};
+
+const getValidatedCustomerQuery = (req, { requireSearch = false } = {}) => {
+  const page = parseIntegerQueryParam(req.query.page, { name: 'page', min: 1, defaultValue: 1 });
+  const limit = parseIntegerQueryParam(req.query.limit, {
+    name: 'limit',
+    min: 1,
+    max: CUSTOMER_MAX_LIMIT,
+    defaultValue: CUSTOMER_DEFAULT_LIMIT
+  });
+
+  const minPrice = parseFloatQueryParam(req.query.minPrice, { name: 'minPrice' });
+  const maxPrice = parseFloatQueryParam(req.query.maxPrice, { name: 'maxPrice' });
+  if (minPrice !== undefined && maxPrice !== undefined && minPrice > maxPrice) {
+    throw new Error('"minPrice" cannot be greater than "maxPrice".');
+  }
+
+  let category;
+  if (req.query.category && req.query.category !== 'All') {
+    const upper = String(req.query.category).toUpperCase();
+    if (!VALID_CATEGORIES.includes(upper)) {
+      throw new Error(`Invalid "category" query param. Must be one of: ${VALID_CATEGORIES.join(', ')}`);
+    }
+    category = upper;
+  }
+
+  const bargainable = parseBooleanQueryParam(req.query.bargainable, { name: 'bargainable' });
+
+  const rawSearch = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+  if (requireSearch && !rawSearch) {
+    throw new Error('Missing required "search" query param.');
+  }
+  if (rawSearch.length > 120) {
+    throw new Error('Invalid "search" query param. Maximum length is 120 characters.');
+  }
+
+  return {
+    page,
+    limit,
+    offset: (page - 1) * limit,
+    category,
+    minPrice,
+    maxPrice,
+    bargainable,
+    search: rawSearch || undefined
+  };
+};
+
+const buildCustomerWhereSql = ({ category, minPrice, maxPrice, bargainable, search } = {}) => {
+  const clauses = [
+    Prisma.sql`p."isActive" = true`,
+    Prisma.sql`p."totalStock" > 0`
+  ];
+
+  if (category) clauses.push(Prisma.sql`p."category" = ${category}::"Category"`);
+  if (minPrice !== undefined) clauses.push(Prisma.sql`p."baseSellingPrice" >= ${minPrice}`);
+  if (maxPrice !== undefined) clauses.push(Prisma.sql`p."baseSellingPrice" <= ${maxPrice}`);
+  if (bargainable !== undefined) clauses.push(Prisma.sql`p."bargainable" = ${bargainable}`);
+
+  if (search) {
+    const like = `%${search}%`;
+    clauses.push(
+      Prisma.sql`(
+        p."name" ILIKE ${like}
+        OR COALESCE(p."description", '') ILIKE ${like}
+        OR COALESCE(p."subCategory", '') ILIKE ${like}
+        OR p."category"::text ILIKE ${like}
+        OR COALESCE(p."uid", '') ILIKE ${like}
+        OR EXISTS (
+          SELECT 1
+          FROM unnest(p."keywords") AS kw
+          WHERE kw ILIKE ${like}
+        )
+      )`
+    );
+  }
+
+  return Prisma.sql`WHERE ${Prisma.join(clauses, Prisma.sql` AND `)}`;
+};
+
+const buildCustomerPagination = (total, page, limit) => ({
+  page,
+  limit,
+  total,
+  totalPages: Math.max(1, Math.ceil(total / limit))
+});
+
+const fetchProductsByIdOrder = async (ids) => {
+  if (!ids.length) return [];
+  const products = await prisma.product.findMany({
+    where: { id: { in: ids } },
+    include: productInclude
+  });
+  const byId = new Map(products.map((product) => [product.id, product]));
+  return ids.map((id) => byId.get(id)).filter(Boolean);
 };
 
 // Get all products with filters (Public)
@@ -218,6 +343,120 @@ const getRecommendedProducts = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: 'Internal server error while fetching recommended products.'
+    });
+  }
+};
+
+// Customer canonical listing endpoint
+const getCustomerProducts = async (req, res) => {
+  try {
+    const query = getValidatedCustomerQuery(req);
+    const whereSql = buildCustomerWhereSql(query);
+
+    const totalRows = await prisma.$queryRaw`
+      SELECT COUNT(*)::int AS "count"
+      FROM "products" p
+      ${whereSql}
+    `;
+    const total = Number(totalRows?.[0]?.count || 0);
+
+    if (total === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'Customer products retrieved successfully.',
+        data: [],
+        count: 0,
+        pagination: buildCustomerPagination(0, query.page, query.limit)
+      });
+    }
+
+    const idRows = await prisma.$queryRaw`
+      SELECT p."id"
+      FROM "products" p
+      ${whereSql}
+      ORDER BY RANDOM()
+      OFFSET ${query.offset}
+      LIMIT ${query.limit}
+    `;
+
+    const ids = idRows.map((row) => row.id);
+    const products = await fetchProductsByIdOrder(ids);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Customer products retrieved successfully.',
+      data: products,
+      count: products.length,
+      pagination: buildCustomerPagination(total, query.page, query.limit)
+    });
+  } catch (error) {
+    if (error?.message?.startsWith('Invalid "') || error?.message?.startsWith('Missing required') || error?.message?.includes('cannot be greater')) {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+    console.error('Get customer products error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error while fetching customer products.'
+    });
+  }
+};
+
+// Customer canonical search endpoint
+const searchCustomerProducts = async (req, res) => {
+  try {
+    const query = getValidatedCustomerQuery(req, { requireSearch: true });
+    const whereSql = buildCustomerWhereSql(query);
+
+    const totalRows = await prisma.$queryRaw`
+      SELECT COUNT(*)::int AS "count"
+      FROM "products" p
+      ${whereSql}
+    `;
+    const total = Number(totalRows?.[0]?.count || 0);
+
+    if (total === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'Customer product search completed successfully.',
+        data: [],
+        count: 0,
+        pagination: buildCustomerPagination(0, query.page, query.limit)
+      });
+    }
+
+    const idRows = await prisma.$queryRaw`
+      SELECT p."id"
+      FROM "products" p
+      ${whereSql}
+      ORDER BY p."createdAt" DESC, p."id" DESC
+      OFFSET ${query.offset}
+      LIMIT ${query.limit}
+    `;
+
+    const ids = idRows.map((row) => row.id);
+    const products = await fetchProductsByIdOrder(ids);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Customer product search completed successfully.',
+      data: products,
+      count: products.length,
+      pagination: buildCustomerPagination(total, query.page, query.limit)
+    });
+  } catch (error) {
+    if (error?.message?.startsWith('Invalid "') || error?.message?.startsWith('Missing required') || error?.message?.includes('cannot be greater')) {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+    console.error('Search customer products error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error while searching customer products.'
     });
   }
 };
@@ -936,6 +1175,8 @@ const notifyMeWhenAvailable = async (req, res) => {
 
 module.exports = {
   getAllProducts,
+  getCustomerProducts,
+  searchCustomerProducts,
   getProductById,
   getProductsByCategory,
   getRecommendedProducts,
