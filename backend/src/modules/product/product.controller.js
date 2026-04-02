@@ -55,10 +55,9 @@ const parseBooleanQueryParam = (value, { name } = {}) => {
 };
 
 /**
- * Escapes PostgreSQL LIKE metacharacters (`\`, `%`, `_`) from user input so
- * ILIKE pattern checks treat them as plain text rather than wildcards.
- * This preserves expected partial matching behavior without broad wildcard
- * expansion from unescaped user-provided characters.
+ * Escape PostgreSQL LIKE metacharacters from user input for safe ILIKE patterns.
+ * @param {string} value
+ * @returns {string}
  */
 const escapeLikePattern = (value) => value.replace(/[\\%_]/g, '\\$&');
 
@@ -108,6 +107,17 @@ const getValidatedCustomerQuery = (req, { requireSearch = false } = {}) => {
   };
 };
 
+/**
+ * Build SQL WHERE clause for customer-visible product listing/search.
+ * @param {{
+ *  category?: string,
+ *  minPrice?: number,
+ *  maxPrice?: number,
+ *  bargainable?: boolean,
+ *  search?: string
+ * }} params
+ * @returns {import('@prisma/client').Prisma.Sql}
+ */
 const buildCustomerWhereSql = ({ category, minPrice, maxPrice, bargainable, search } = {}) => {
   const clauses = [
     Prisma.sql`p."isActive" = true`,
@@ -140,6 +150,13 @@ const buildCustomerWhereSql = ({ category, minPrice, maxPrice, bargainable, sear
   return Prisma.sql`WHERE ${Prisma.join(clauses, Prisma.sql` AND `)}`;
 };
 
+/**
+ * Build pagination metadata.
+ * @param {number} total
+ * @param {number} page
+ * @param {number} limit
+ * @returns {{page:number, limit:number, total:number, totalPages:number}}
+ */
 const buildCustomerPagination = (total, page, limit) => ({
   page,
   limit,
@@ -147,6 +164,11 @@ const buildCustomerPagination = (total, page, limit) => ({
   totalPages: Math.max(1, Math.ceil(total / limit))
 });
 
+/**
+ * Fetch products by id preserving input id order.
+ * @param {number[]} ids
+ * @returns {Promise<object[]>}
+ */
 const fetchProductsByIdOrder = async (ids) => {
   if (!ids.length) return [];
   const products = await prisma.product.findMany({

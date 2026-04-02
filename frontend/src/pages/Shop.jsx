@@ -12,6 +12,7 @@ import { API_BASE_URL } from '../config/constants';
 
 const API = API_BASE_URL;
 const PAGE_LIMIT = 20;
+const SEARCH_DEBOUNCE_MS = 350;
 
 export default function Shop() {
   const [products, setProducts] = useState([]);
@@ -184,7 +185,7 @@ export default function Shop() {
       const trimmed = searchQuery.trim();
       setPage(1);
       setActiveSearch(trimmed);
-    }, 350);
+    }, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
