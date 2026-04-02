@@ -377,14 +377,7 @@ export default function Shop() {
               <input 
                 placeholder="Search products..." 
                 value={searchQuery} 
-                onChange={e => {
-                  const nextValue = e.target.value;
-                  setSearchQuery(nextValue);
-                  if (!nextValue.trim()) {
-                    setActiveSearch('');
-                    setPage(1);
-                  }
-                }} 
+                onChange={e => setSearchQuery(e.target.value)} 
               />
             </div>
 

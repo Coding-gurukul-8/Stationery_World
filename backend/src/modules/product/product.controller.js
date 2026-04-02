@@ -19,13 +19,21 @@ const productInclude = {
 
 const CUSTOMER_DEFAULT_LIMIT = 20;
 const CUSTOMER_MAX_LIMIT = 50;
+const SEARCH_MAX_LENGTH = 120;
+
+class QueryValidationError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'QueryValidationError';
+  }
+}
 
 const parseIntegerQueryParam = (value, { name, min = 1, max = Number.MAX_SAFE_INTEGER, defaultValue } = {}) => {
   if (value === undefined || value === null || value === '') return defaultValue;
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
     const rangeMsg = max === Number.MAX_SAFE_INTEGER ? `>= ${min}` : `${min}-${max}`;
-    throw new Error(`Invalid "${name}" query param. Expected integer in range ${rangeMsg}.`);
+    throw new QueryValidationError(`Invalid "${name}" query param. Expected integer in range ${rangeMsg}.`);
   }
   return parsed;
 };
@@ -34,7 +42,7 @@ const parseFloatQueryParam = (value, { name } = {}) => {
   if (value === undefined || value === null || value === '') return undefined;
   const parsed = Number.parseFloat(value);
   if (!Number.isFinite(parsed) || parsed < 0) {
-    throw new Error(`Invalid "${name}" query param. Expected a non-negative number.`);
+    throw new QueryValidationError(`Invalid "${name}" query param. Expected a non-negative number.`);
   }
   return parsed;
 };
@@ -43,8 +51,10 @@ const parseBooleanQueryParam = (value, { name } = {}) => {
   if (value === undefined || value === null || value === '') return undefined;
   if (value === 'true') return true;
   if (value === 'false') return false;
-  throw new Error(`Invalid "${name}" query param. Use "true" or "false".`);
+  throw new QueryValidationError(`Invalid "${name}" query param. Use "true" or "false".`);
 };
+
+const escapeLikePattern = (value) => value.replace(/[\\%_]/g, '\\$&');
 
 const getValidatedCustomerQuery = (req, { requireSearch = false } = {}) => {
   const page = parseIntegerQueryParam(req.query.page, { name: 'page', min: 1, defaultValue: 1 });
@@ -58,14 +68,14 @@ const getValidatedCustomerQuery = (req, { requireSearch = false } = {}) => {
   const minPrice = parseFloatQueryParam(req.query.minPrice, { name: 'minPrice' });
   const maxPrice = parseFloatQueryParam(req.query.maxPrice, { name: 'maxPrice' });
   if (minPrice !== undefined && maxPrice !== undefined && minPrice > maxPrice) {
-    throw new Error('"minPrice" cannot be greater than "maxPrice".');
+    throw new QueryValidationError('"minPrice" cannot be greater than "maxPrice".');
   }
 
   let category;
   if (req.query.category && req.query.category !== 'All') {
     const upper = String(req.query.category).toUpperCase();
     if (!VALID_CATEGORIES.includes(upper)) {
-      throw new Error(`Invalid "category" query param. Must be one of: ${VALID_CATEGORIES.join(', ')}`);
+      throw new QueryValidationError(`Invalid "category" query param. Must be one of: ${VALID_CATEGORIES.join(', ')}`);
     }
     category = upper;
   }
@@ -74,10 +84,10 @@ const getValidatedCustomerQuery = (req, { requireSearch = false } = {}) => {
 
   const rawSearch = typeof req.query.search === 'string' ? req.query.search.trim() : '';
   if (requireSearch && !rawSearch) {
-    throw new Error('Missing required "search" query param.');
+    throw new QueryValidationError('Missing required "search" query param.');
   }
-  if (rawSearch.length > 120) {
-    throw new Error('Invalid "search" query param. Maximum length is 120 characters.');
+  if (rawSearch.length > SEARCH_MAX_LENGTH) {
+    throw new QueryValidationError(`Invalid "search" query param. Maximum length is ${SEARCH_MAX_LENGTH} characters.`);
   }
 
   return {
@@ -104,18 +114,18 @@ const buildCustomerWhereSql = ({ category, minPrice, maxPrice, bargainable, sear
   if (bargainable !== undefined) clauses.push(Prisma.sql`p."bargainable" = ${bargainable}`);
 
   if (search) {
-    const like = `%${search}%`;
+    const like = `%${escapeLikePattern(search)}%`;
     clauses.push(
       Prisma.sql`(
-        p."name" ILIKE ${like}
-        OR COALESCE(p."description", '') ILIKE ${like}
-        OR COALESCE(p."subCategory", '') ILIKE ${like}
-        OR p."category"::text ILIKE ${like}
-        OR COALESCE(p."uid", '') ILIKE ${like}
+        p."name" ILIKE ${like} ESCAPE '\'
+        OR COALESCE(p."description", '') ILIKE ${like} ESCAPE '\'
+        OR COALESCE(p."subCategory", '') ILIKE ${like} ESCAPE '\'
+        OR p."category"::text ILIKE ${like} ESCAPE '\'
+        OR COALESCE(p."uid", '') ILIKE ${like} ESCAPE '\'
         OR EXISTS (
           SELECT 1
           FROM unnest(p."keywords") AS kw
-          WHERE kw ILIKE ${like}
+          WHERE kw ILIKE ${like} ESCAPE '\'
         )
       )`
     );
@@ -390,7 +400,7 @@ const getCustomerProducts = async (req, res) => {
       pagination: buildCustomerPagination(total, query.page, query.limit)
     });
   } catch (error) {
-    if (error?.message?.startsWith('Invalid "') || error?.message?.startsWith('Missing required') || error?.message?.includes('cannot be greater')) {
+    if (error instanceof QueryValidationError) {
       return res.status(400).json({
         success: false,
         message: error.message
@@ -447,7 +457,7 @@ const searchCustomerProducts = async (req, res) => {
       pagination: buildCustomerPagination(total, query.page, query.limit)
     });
   } catch (error) {
-    if (error?.message?.startsWith('Invalid "') || error?.message?.startsWith('Missing required') || error?.message?.includes('cannot be greater')) {
+    if (error instanceof QueryValidationError) {
       return res.status(400).json({
         success: false,
         message: error.message
