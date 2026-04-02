@@ -54,6 +54,8 @@ const parseBooleanQueryParam = (value, { name } = {}) => {
   throw new QueryValidationError(`Invalid "${name}" query param. Use "true" or "false".`);
 };
 
+// Escape PostgreSQL LIKE meta characters (backslash, percent, underscore)
+// so user text is treated as plain text in ILIKE pattern matching.
 const escapeLikePattern = (value) => value.replace(/[\\%_]/g, '\\$&');
 
 const getValidatedCustomerQuery = (req, { requireSearch = false } = {}) => {

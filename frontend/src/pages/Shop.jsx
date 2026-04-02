@@ -174,6 +174,7 @@ export default function Shop() {
   }, [page, activeSearch, selectedCategory, fetchProducts]);
 
   useEffect(() => {
+    // Debounce search input to reduce backend calls while typing.
     const timer = setTimeout(() => {
       const trimmed = searchQuery.trim();
       setPage(1);
@@ -420,7 +421,7 @@ export default function Shop() {
               onBuyNow={handleBuyNow}
               wishlistIds={wishlistIds}
             />
-            <div className="shop-toolbar" style={{ marginTop: 12 }}>
+            <div className="shop-toolbar shop-toolbar-pagination">
               <button
                 className="btn outline"
                 disabled={pagination.page <= 1 || loading}
@@ -428,7 +429,7 @@ export default function Shop() {
               >
                 Previous
               </button>
-              <div className="products-count" style={{ margin: 0 }}>
+              <div className="products-count products-count-pagination">
                 Page {pagination.page} of {pagination.totalPages}
               </div>
               <button
