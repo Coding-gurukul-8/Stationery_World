@@ -5,6 +5,8 @@ const path = require('path');
 const rateLimit = require('express-rate-limit');
 const {
   getAllProducts,
+  getCustomerProducts,
+  searchCustomerProducts,
   getProductById,
   getProductsByCategory,
   getRecommendedProducts,
@@ -99,6 +101,8 @@ router.get('/admin/low-stock', authMiddleware, adminMiddleware, getLowStockProdu
 
 // Public routes
 router.get('/', getAllProducts);
+router.get('/customer', getCustomerProducts);
+router.get('/customer/search', searchCustomerProducts);
 router.get('/recommended', authMiddleware, getRecommendedProducts);
 router.get('/category/:category', getProductsByCategory);
 

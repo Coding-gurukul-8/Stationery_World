@@ -563,6 +563,14 @@
   font-weight: 600;
 }
 
+.shop-toolbar-pagination {
+  margin-top: 12px;
+}
+
+.products-count-pagination {
+  margin: 0;
+}
+
 /* Product Grid */
 .product-grid {
   display: grid;
@@ -941,4 +949,3 @@
   cursor: not-allowed;
   background: var(--text-secondary);
 }
-
