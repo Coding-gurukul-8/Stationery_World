@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useToast } from '../context/ToastContext';
 import { useSearch } from '../context/SearchContext';
@@ -27,6 +27,7 @@ export default function Shop() {
   const [pagination, setPagination] = useState({ page: 1, limit: PAGE_LIMIT, total: 0, totalPages: 1 });
 
   const { showToast } = useToast();
+  const showToastRef = useRef(showToast);
   const [wishlistIds, setWishlistIds] = useState(new Set());
   const { registerSearchHandler, unregisterSearchHandler, searchQuery: topbarQuery, clearSearch } = useSearch();
   const location = useLocation();
@@ -39,6 +40,10 @@ export default function Shop() {
   });
 
   const categories = useMemo(() => ['All', 'STATIONERY', 'BOOKS', 'TOYS'], []);
+
+  useEffect(() => {
+    showToastRef.current = showToast;
+  }, [showToast]);
 
   // Sidebar "Home" click resets page
   useEffect(() => {
@@ -136,11 +141,11 @@ export default function Shop() {
     } catch (err) {
       console.error('Error fetching products:', err);
       setError(err.message);
-      showToast('Failed to load products', 'error');
+      showToastRef.current?.('Failed to load products', 'error');
     } finally {
       setLoading(false);
     }
-  }, [showToast]);
+  }, []);
 
   const visibleProducts = useMemo(() => {
     const filtered = [...products];
