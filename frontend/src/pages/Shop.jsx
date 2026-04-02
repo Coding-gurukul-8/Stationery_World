@@ -57,7 +57,9 @@ export default function Shop() {
       const res = await fetch(`${API}/api/wishlist`, { headers: { Authorization: `Bearer ${token}` } });
       const result = await res.json();
       if (result.success) setWishlistIds(new Set((result.data || []).map(w => w.productId)));
-    } catch {}
+    } catch (err) {
+      console.error('Failed to load wishlist ids:', err);
+    }
   }, []);
 
   useEffect(() => {
@@ -105,7 +107,7 @@ export default function Shop() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [topbarQuery]);
 
-  const fetchProducts = async ({ currentPage = 1, searchTerm = '', category = 'All' } = {}) => {
+  const fetchProducts = useCallback(async ({ currentPage = 1, searchTerm = '', category = 'All' } = {}) => {
     try {
       setLoading(true);
       const params = new URLSearchParams({
@@ -138,7 +140,7 @@ export default function Shop() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [showToast]);
 
   const visibleProducts = useMemo(() => {
     const filtered = [...products];
@@ -169,7 +171,7 @@ export default function Shop() {
 
   useEffect(() => {
     fetchProducts({ currentPage: page, searchTerm: activeSearch, category: selectedCategory });
-  }, [page, activeSearch, selectedCategory]);
+  }, [page, activeSearch, selectedCategory, fetchProducts]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -269,7 +271,9 @@ export default function Shop() {
         city: user?.city || '', state: user?.state || '',
         postalCode: user?.postalCode || '', country: user?.country || '', note: ''
       });
-    } catch {}
+    } catch (err) {
+      console.error('Failed to load user defaults for buy now:', err);
+    }
     setBuyNowProduct(product);
     setBuyNowQty(1);
     setShowDetailModal(false);
