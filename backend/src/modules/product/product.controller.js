@@ -1,5 +1,5 @@
-const prisma = require('../../../prisma/client');
 const { Prisma } = require('@prisma/client');
+const prisma = require('../../../prisma/client');
 
 // Valid categories enum
 const VALID_CATEGORIES = ['STATIONERY', 'BOOKS', 'TOYS'];
@@ -17,239 +17,246 @@ const productInclude = {
   }
 };
 
-const CUSTOMER_DEFAULT_LIMIT = 20;
-const CUSTOMER_MAX_LIMIT = 50;
-const SEARCH_MAX_LENGTH = 120;
+const MAX_PAGE_LIMIT = 100;
 
-class QueryValidationError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = 'QueryValidationError';
-  }
-}
-
-const parseIntegerQueryParam = (value, { name, min = 1, max = Number.MAX_SAFE_INTEGER, defaultValue } = {}) => {
-  if (value === undefined || value === null || value === '') return defaultValue;
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
-    const rangeMsg = max === Number.MAX_SAFE_INTEGER ? `>= ${min}` : `${min}-${max}`;
-    throw new QueryValidationError(`Invalid "${name}" query param. Expected integer in range ${rangeMsg}.`);
-  }
-  return parsed;
+const parsePositiveInt = (value) => {
+  const parsed = parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 };
 
-const parseFloatQueryParam = (value, { name } = {}) => {
-  if (value === undefined || value === null || value === '') return undefined;
-  const parsed = Number.parseFloat(value);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    throw new QueryValidationError(`Invalid "${name}" query param. Expected a non-negative number.`);
+const getOrderByClause = (sortBy, sortOrder) => {
+  const order = sortOrder === 'asc' ? 'asc' : 'desc';
+
+  switch ((sortBy || '').toLowerCase()) {
+    case 'price-low':
+      return { baseSellingPrice: 'asc' };
+    case 'price-high':
+      return { baseSellingPrice: 'desc' };
+    case 'name':
+      return { name: 'asc' };
+    case 'newest':
+    case 'featured':
+      return { createdAt: 'desc' };
+    case 'price':
+      return { baseSellingPrice: order };
+    case 'createdat':
+      return { createdAt: order };
+    default:
+      return { createdAt: 'desc' };
   }
-  return parsed;
 };
 
-const parseBooleanQueryParam = (value, { name } = {}) => {
-  if (value === undefined || value === null || value === '') return undefined;
-  if (value === 'true') return true;
-  if (value === 'false') return false;
-  throw new QueryValidationError(`Invalid "${name}" query param. Use "true" or "false".`);
-};
-
-/**
- * Escape PostgreSQL LIKE metacharacters from user input for safe ILIKE patterns.
- * @param {string} value
- * @returns {string}
- */
-const escapeLikePattern = (value) => value.replace(/[\\%_]/g, '\\$&');
-
-const getValidatedCustomerQuery = (req, { requireSearch = false } = {}) => {
-  const page = parseIntegerQueryParam(req.query.page, { name: 'page', min: 1, defaultValue: 1 });
-  const limit = parseIntegerQueryParam(req.query.limit, {
-    name: 'limit',
-    min: 1,
-    max: CUSTOMER_MAX_LIMIT,
-    defaultValue: CUSTOMER_DEFAULT_LIMIT
-  });
-
-  const minPrice = parseFloatQueryParam(req.query.minPrice, { name: 'minPrice' });
-  const maxPrice = parseFloatQueryParam(req.query.maxPrice, { name: 'maxPrice' });
-  if (minPrice !== undefined && maxPrice !== undefined && minPrice > maxPrice) {
-    throw new QueryValidationError('"minPrice" cannot be greater than "maxPrice".');
-  }
-
-  let category;
-  if (req.query.category && req.query.category !== 'All') {
-    const upper = String(req.query.category).toUpperCase();
-    if (!VALID_CATEGORIES.includes(upper)) {
-      throw new QueryValidationError(`Invalid "category" query param. Must be one of: ${VALID_CATEGORIES.join(', ')}`);
-    }
-    category = upper;
-  }
-
-  const bargainable = parseBooleanQueryParam(req.query.bargainable, { name: 'bargainable' });
-
-  const rawSearch = typeof req.query.search === 'string' ? req.query.search.trim() : '';
-  if (requireSearch && !rawSearch) {
-    throw new QueryValidationError('Missing required "search" query param.');
-  }
-  if (rawSearch.length > SEARCH_MAX_LENGTH) {
-    throw new QueryValidationError(`Invalid "search" query param. Maximum length is ${SEARCH_MAX_LENGTH} characters.`);
-  }
-
-  return {
-    page,
-    limit,
-    offset: (page - 1) * limit,
-    category,
-    minPrice,
-    maxPrice,
-    bargainable,
-    search: rawSearch || undefined
-  };
-};
-
-/**
- * Build SQL WHERE clause for customer-visible product listing/search.
- */
-const buildCustomerWhereSql = ({ category, minPrice, maxPrice, bargainable, search } = {}) => {
-  const clauses = [
-    Prisma.sql`p."isActive" = true`,
-    Prisma.sql`p."totalStock" > 0`
-  ];
-
-  if (category) clauses.push(Prisma.sql`p."category" = ${category}::"Category"`);
-  if (minPrice !== undefined) clauses.push(Prisma.sql`p."baseSellingPrice" >= ${minPrice}`);
-  if (maxPrice !== undefined) clauses.push(Prisma.sql`p."baseSellingPrice" <= ${maxPrice}`);
-  if (bargainable !== undefined) clauses.push(Prisma.sql`p."bargainable" = ${bargainable}`);
-
-  if (search) {
-    const like = `%${escapeLikePattern(search)}%`;
-    clauses.push(
-      Prisma.sql`(
-        p."name" ILIKE ${like} ESCAPE '\'
-        OR COALESCE(p."description", '') ILIKE ${like} ESCAPE '\'
-        OR COALESCE(p."subCategory", '') ILIKE ${like} ESCAPE '\'
-        OR p."category"::text ILIKE ${like} ESCAPE '\'
-        OR COALESCE(p."uid", '') ILIKE ${like} ESCAPE '\'
-        OR EXISTS (
-          SELECT 1
-          FROM unnest(p."keywords") AS kw
-          WHERE kw ILIKE ${like} ESCAPE '\'
-        )
-      )`
-    );
-  }
-
-  return Prisma.sql`WHERE ${Prisma.join(clauses, Prisma.sql` AND `)}`;
-};
-
-/**
- * Build pagination metadata.
- */
-const buildCustomerPagination = (total, page, limit) => ({
-  page,
-  limit,
-  total,
-  totalPages: Math.max(1, Math.ceil(total / limit))
-});
-
-/**
- * Fetch products by id preserving input id order.
- */
-const fetchProductsByIdOrder = async (ids) => {
-  if (!ids.length) return [];
-  const products = await prisma.product.findMany({
-    where: { id: { in: ids } },
-    include: productInclude
-  });
-  const byId = new Map(products.map((product) => [product.id, product]));
-  return ids.map((id) => byId.get(id)).filter(Boolean);
-};
-
-// ─── Recommendations & interaction tracking ───────────────────────────────────
-const { getRecommendedProductsForUser, trackInteraction } = require('./recommendations.service');
-
-// ─────────────────────────────────────────────────────────────────────────────
-
-// Get all products with filters (Admin / internal use)
+// Get all products with filters (Public)
 const getAllProducts = async (req, res) => {
   try {
-    const {
-      isActive,
-      category,
-      minPrice,
-      maxPrice,
+    const { 
+      isActive, 
+      category, 
+      minPrice, 
+      maxPrice, 
       search,
       bargainable,
-      lowStock
+      lowStock,
+      audience,
+      random,
+      page: pageQuery,
+      limit: limitQuery,
+      sortBy,
+      sortOrder
     } = req.query;
 
+    const normalizedAudience = String(audience || '').toLowerCase();
+    const isCustomerCatalog = normalizedAudience === 'customer';
+    const shouldRandomize = String(random || '').toLowerCase() === 'true';
+    const shouldLowStockFilter = lowStock === 'true';
+    const searchTerm = typeof search === 'string' ? search.trim() : '';
+    const upperSearchTerm = searchTerm.toUpperCase();
+
+    if (searchTerm.length > 200) {
+      return res.status(400).json({
+        success: false,
+        message: 'search must be 200 characters or fewer.'
+      });
+    }
+
+    if (pageQuery !== undefined && parsePositiveInt(pageQuery) === null) {
+      return res.status(400).json({
+        success: false,
+        message: 'page must be a positive integer.'
+      });
+    }
+
+    if (limitQuery !== undefined && parsePositiveInt(limitQuery) === null) {
+      return res.status(400).json({
+        success: false,
+        message: 'limit must be a positive integer.'
+      });
+    }
+
+    const page = parsePositiveInt(pageQuery) || 1;
+    const requestedLimit = parsePositiveInt(limitQuery);
+    const effectiveLimit = Math.min(requestedLimit || 20, MAX_PAGE_LIMIT);
+    const shouldPaginate =
+      isCustomerCatalog ||
+      pageQuery !== undefined ||
+      limitQuery !== undefined ||
+      !!searchTerm;
+    const skip = shouldPaginate ? (page - 1) * effectiveLimit : undefined;
+
+    // Build filter conditions
     const where = {};
 
-    if (isActive !== undefined) {
+    // Customer catalog always returns customer-eligible products
+    if (isCustomerCatalog) {
+      where.isActive = true;
+    } else if (isActive !== undefined) {
       where.isActive = isActive === 'true';
     }
 
+    // Filter by category
     if (category && VALID_CATEGORIES.includes(category.toUpperCase())) {
       where.category = category.toUpperCase();
     }
 
+    // Filter by bargainable status
     if (bargainable !== undefined) {
       where.bargainable = bargainable === 'true';
     }
 
+    // Filter by price range (baseSellingPrice)
     if (minPrice || maxPrice) {
       where.baseSellingPrice = {};
       if (minPrice) where.baseSellingPrice.gte = parseFloat(minPrice);
       if (maxPrice) where.baseSellingPrice.lte = parseFloat(maxPrice);
     }
 
-    if (search) {
-      const trimmedSearch = search.trim();
-      const lowerSearch   = trimmedSearch.toLowerCase();
-      const upperSearch   = trimmedSearch.toUpperCase();
+    // Search in uid, name, description, subCategory, and keywords
+    if (searchTerm) {
+      const terms = searchTerm.split(/\s+/).filter(Boolean);
 
-      // Text field matches — all case-insensitive via Prisma mode
+      // Create OR conditions: uid contains, name contains, description contains, subCategory contains
       const orClauses = [
-        { uid:         { contains: trimmedSearch, mode: 'insensitive' } },
-        { name:        { contains: trimmedSearch, mode: 'insensitive' } },
-        { description: { contains: trimmedSearch, mode: 'insensitive' } },
-        { subCategory: { contains: trimmedSearch, mode: 'insensitive' } },
-        // Allow typing the category name (e.g. stationery, BOOKS)
-        { category: { equals: upperSearch } }
+        { uid: { contains: searchTerm, mode: 'insensitive' } },
+        { name: { contains: searchTerm, mode: 'insensitive' } },
+        { description: { contains: searchTerm, mode: 'insensitive' } },
+        { subCategory: { contains: searchTerm, mode: 'insensitive' } }
       ];
 
-      // Keywords: Prisma hasSome does exact string match on array elements,
-      // so we send every casing variant of every word so camlin, Camlin,
-      // CAMLIN all hit a keyword stored as any of those variants.
-      const terms = trimmedSearch.split(/\s+/).filter(Boolean);
-      const termVariants = new Set([
-        trimmedSearch, lowerSearch, upperSearch,
-        ...terms,
-        ...terms.map(t => t.toLowerCase()),
-        ...terms.map(t => t.toUpperCase()),
-        ...terms.map(t => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase())
-      ]);
-      orClauses.push({ keywords: { hasSome: [...termVariants] } });
+      if (VALID_CATEGORIES.includes(upperSearchTerm)) {
+        orClauses.push({ category: upperSearchTerm });
+      }
 
-      where.AND = [{ OR: orClauses }];
+      // If there are distinct terms, search keywords array for any match
+      if (terms.length > 0) {
+        orClauses.push({ keywords: { hasSome: terms } });
+      }
+
+      where.AND = [
+        { OR: orClauses }
+      ];
     }
 
-    const products = await prisma.product.findMany({
-      where,
-      include: productInclude,
-      orderBy: { createdAt: 'desc' }
-    });
+    const orderByClause = getOrderByClause(sortBy, sortOrder);
+    const rawRandomAllowed = shouldRandomize && !searchTerm && !shouldLowStockFilter;
+    let products = [];
+    let totalCount = 0;
 
+    if (rawRandomAllowed) {
+      const rawWhere = [];
+
+      if (where.isActive !== undefined) {
+        rawWhere.push(
+          where.isActive
+            ? Prisma.sql`"isActive" = TRUE`
+            : Prisma.sql`"isActive" = FALSE`
+        );
+      }
+      if (where.category !== undefined) {
+        rawWhere.push(Prisma.sql`"category" = ${where.category}`);
+      }
+      if (where.bargainable !== undefined) {
+        rawWhere.push(Prisma.sql`"bargainable" = ${where.bargainable}`);
+      }
+      if (where.baseSellingPrice?.gte !== undefined) {
+        rawWhere.push(Prisma.sql`"baseSellingPrice" >= ${where.baseSellingPrice.gte}`);
+      }
+      if (where.baseSellingPrice?.lte !== undefined) {
+        rawWhere.push(Prisma.sql`"baseSellingPrice" <= ${where.baseSellingPrice.lte}`);
+      }
+
+      const whereClause = rawWhere.length
+        ? Prisma.sql`WHERE ${Prisma.join(rawWhere, Prisma.sql` AND `)}`
+        : Prisma.sql``;
+
+      const [randomRows, countedTotal] = await Promise.all([
+        prisma.$queryRaw`
+          SELECT "id"
+          FROM "products"
+          ${whereClause}
+          ORDER BY RANDOM()
+          LIMIT ${effectiveLimit}
+          OFFSET ${skip || 0}
+        `,
+        prisma.product.count({ where })
+      ]);
+
+      const randomIds = randomRows.map((row) => row.id);
+      totalCount = countedTotal;
+
+      if (randomIds.length > 0) {
+        const listed = await prisma.product.findMany({
+          where: { id: { in: randomIds } },
+          include: productInclude
+        });
+
+        const byId = new Map(listed.map((p) => [p.id, p]));
+        products = randomIds.map((id) => byId.get(id)).filter(Boolean);
+      }
+    } else {
+      const query = {
+        where,
+        include: productInclude,
+        orderBy: orderByClause
+      };
+
+      if (shouldPaginate && !shouldLowStockFilter) {
+        query.skip = skip;
+        query.take = effectiveLimit;
+      }
+
+      [products, totalCount] = await Promise.all([
+        prisma.product.findMany(query),
+        prisma.product.count({ where })
+      ]);
+    }
+
+    // If lowStock filter is true, filter products below threshold (use in-memory filter)
     let filteredProducts = products;
-    if (lowStock === 'true') {
-      filteredProducts = products.filter(p => p.totalStock <= p.lowStockThreshold);
+    if (shouldLowStockFilter) {
+      const lowStockProducts = products.filter((p) => p.totalStock <= p.lowStockThreshold);
+      totalCount = lowStockProducts.length;
+      if (shouldPaginate) {
+        filteredProducts = lowStockProducts.slice(skip || 0, (skip || 0) + effectiveLimit);
+      } else {
+        filteredProducts = lowStockProducts;
+      }
     }
 
     return res.status(200).json({
       success: true,
       message: 'Products retrieved successfully.',
       data: filteredProducts,
-      count: filteredProducts.length
+      count: filteredProducts.length,
+      ...(shouldPaginate
+        ? {
+            pagination: {
+              page,
+              limit: effectiveLimit,
+              total: totalCount,
+              totalPages: Math.max(1, Math.ceil(totalCount / effectiveLimit))
+            }
+          }
+        : {})
     });
   } catch (error) {
     console.error('Get all products error:', error);
@@ -305,6 +312,7 @@ const getProductsByCategory = async (req, res) => {
     const { category } = req.params;
 
     const upperCategory = category.toUpperCase();
+    
     if (!VALID_CATEGORIES.includes(upperCategory)) {
       return res.status(400).json({
         success: false,
@@ -313,9 +321,14 @@ const getProductsByCategory = async (req, res) => {
     }
 
     const products = await prisma.product.findMany({
-      where: { category: upperCategory, isActive: true },
+      where: {
+        category: upperCategory,
+        isActive: true
+      },
       include: { images: true },
-      orderBy: { name: 'asc' }
+      orderBy: {
+        name: 'asc'
+      }
     });
 
     console.log(`Found ${products.length} products in category ${upperCategory}`);
@@ -335,8 +348,15 @@ const getProductsByCategory = async (req, res) => {
   }
 };
 
-// Get recommended products (based on wishlist/cart/order/view/search history)
+const { getRecommendedProductsForUser } = require('./recommendations.service');
+
+// Get recommended products (based on wishlist/cart/order history)
+// Supports ?random=true to force a fresh random set (used on home-page refresh).
 const getRecommendedProducts = async (req, res) => {
+  // Prevent any proxy/CDN from caching personalised recommendations
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+
   try {
     const userId = req.user?.id;
 
@@ -347,13 +367,17 @@ const getRecommendedProducts = async (req, res) => {
       });
     }
 
-    const limit = parseInt(req.query.limit) || 20;
-    const recommendedProducts = await getRecommendedProductsForUser(userId, limit);
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+    const forceRandom = String(req.query.random || '').toLowerCase() === 'true';
+
+    const recommendedProducts = await getRecommendedProductsForUser(userId, limit, forceRandom);
 
     return res.status(200).json({
       success: true,
       message: 'Recommended products retrieved successfully.',
-      data: recommendedProducts
+      data: recommendedProducts,
+      count: recommendedProducts.length,
+      meta: { forceRandom }
     });
   } catch (error) {
     console.error('Get recommended products error:', error);
@@ -364,151 +388,16 @@ const getRecommendedProducts = async (req, res) => {
   }
 };
 
-/**
- * POST /api/products/track-interaction
- * Body: { productId: number, type: 'VIEW' | 'SEARCH', searchTerm?: string }
- *
- * Fire-and-forget: responds 200 immediately, tracks in background.
- * Auth required so we know which user to attribute the signal to.
- */
-const trackInteractionHandler = async (req, res) => {
-  // Respond immediately — tracking must never slow the client
-  res.status(200).json({ success: true });
-
-  try {
-    const userId = req.user?.id;
-    if (!userId) return;
-
-    const { productId, type, searchTerm } = req.body;
-    const pid = parseInt(productId);
-
-    if (!pid || !['VIEW', 'SEARCH'].includes(type)) return;
-
-    await trackInteraction(userId, pid, type, searchTerm || null);
-  } catch (err) {
-    // Non-critical — never surface analytics errors to the client
-    console.error('track-interaction background error:', err.message);
-  }
-};
-
-// Customer canonical listing endpoint
-const getCustomerProducts = async (req, res) => {
-  try {
-    const query = getValidatedCustomerQuery(req);
-    const whereSql = buildCustomerWhereSql(query);
-
-    const totalRows = await prisma.$queryRaw`
-      SELECT COUNT(*)::int AS "count"
-      FROM "products" p
-      ${whereSql}
-    `;
-    const total = Number(totalRows?.[0]?.count || 0);
-
-    if (total === 0) {
-      return res.status(200).json({
-        success: true,
-        message: 'Customer products retrieved successfully.',
-        data: [],
-        count: 0,
-        pagination: buildCustomerPagination(0, query.page, query.limit)
-      });
-    }
-
-    const idRows = await prisma.$queryRaw`
-      SELECT p."id"
-      FROM "products" p
-      ${whereSql}
-      ORDER BY RANDOM()
-      OFFSET ${query.offset}
-      LIMIT ${query.limit}
-    `;
-
-    const ids = idRows.map((row) => row.id);
-    const products = await fetchProductsByIdOrder(ids);
-
-    return res.status(200).json({
-      success: true,
-      message: 'Customer products retrieved successfully.',
-      data: products,
-      count: products.length,
-      pagination: buildCustomerPagination(total, query.page, query.limit)
-    });
-  } catch (error) {
-    if (error instanceof QueryValidationError) {
-      return res.status(400).json({ success: false, message: error.message });
-    }
-    console.error('Get customer products error:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error while fetching customer products.'
-    });
-  }
-};
-
-// Customer canonical search endpoint
-const searchCustomerProducts = async (req, res) => {
-  try {
-    const query = getValidatedCustomerQuery(req, { requireSearch: true });
-    const whereSql = buildCustomerWhereSql(query);
-
-    const totalRows = await prisma.$queryRaw`
-      SELECT COUNT(*)::int AS "count"
-      FROM "products" p
-      ${whereSql}
-    `;
-    const total = Number(totalRows?.[0]?.count || 0);
-
-    if (total === 0) {
-      return res.status(200).json({
-        success: true,
-        message: 'Customer product search completed successfully.',
-        data: [],
-        count: 0,
-        pagination: buildCustomerPagination(0, query.page, query.limit)
-      });
-    }
-
-    const idRows = await prisma.$queryRaw`
-      SELECT p."id"
-      FROM "products" p
-      ${whereSql}
-      ORDER BY p."createdAt" DESC, p."id" DESC
-      OFFSET ${query.offset}
-      LIMIT ${query.limit}
-    `;
-
-    const ids = idRows.map((row) => row.id);
-    const products = await fetchProductsByIdOrder(ids);
-
-    return res.status(200).json({
-      success: true,
-      message: 'Customer product search completed successfully.',
-      data: products,
-      count: products.length,
-      pagination: buildCustomerPagination(total, query.page, query.limit)
-    });
-  } catch (error) {
-    if (error instanceof QueryValidationError) {
-      return res.status(400).json({ success: false, message: error.message });
-    }
-    console.error('Search customer products error:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error while searching customer products.'
-    });
-  }
-};
-
 // Create product (Admin only)
 const createProduct = async (req, res) => {
   try {
     console.log('Create product request received');
     console.log('Request body:', req.body);
 
-    const {
-      name,
-      description,
-      category,
+    const { 
+      name, 
+      description, 
+      category, 
       subCategory,
       costPrice,
       baseSellingPrice,
@@ -516,6 +405,7 @@ const createProduct = async (req, res) => {
       lowStockThreshold
     } = req.body;
 
+    // Validate required fields
     if (!name || !category || !subCategory || costPrice === undefined || baseSellingPrice === undefined || lowStockThreshold === undefined) {
       return res.status(400).json({
         success: false,
@@ -523,6 +413,7 @@ const createProduct = async (req, res) => {
       });
     }
 
+    // Validate category
     const upperCategory = category.toUpperCase();
     if (!VALID_CATEGORIES.includes(upperCategory)) {
       return res.status(400).json({
@@ -531,6 +422,7 @@ const createProduct = async (req, res) => {
       });
     }
 
+    // Validate costPrice
     const cost = parseFloat(costPrice);
     if (isNaN(cost) || cost < 0) {
       return res.status(400).json({
@@ -539,6 +431,7 @@ const createProduct = async (req, res) => {
       });
     }
 
+    // Validate baseSellingPrice
     const sellingPrice = parseFloat(baseSellingPrice);
     if (isNaN(sellingPrice) || sellingPrice < 0) {
       return res.status(400).json({
@@ -547,6 +440,7 @@ const createProduct = async (req, res) => {
       });
     }
 
+    // Business logic: selling price should be >= cost price
     if (sellingPrice < cost) {
       return res.status(400).json({
         success: false,
@@ -554,6 +448,7 @@ const createProduct = async (req, res) => {
       });
     }
 
+    // Validate lowStockThreshold
     const threshold = parseInt(lowStockThreshold);
     if (isNaN(threshold) || threshold < 0) {
       return res.status(400).json({
@@ -562,12 +457,13 @@ const createProduct = async (req, res) => {
       });
     }
 
-    const keywordArray = Array.isArray(req.body.keywords)
-      ? req.body.keywords.map(k => String(k).trim()).filter(Boolean)
-      : [];
+    // Create product
+    // Prepare image and keyword data if provided
+    const keywordArray = Array.isArray(req.body.keywords) ? req.body.keywords.map(k => String(k).trim()).filter(Boolean) : [];
     const images = Array.isArray(req.body.images) ? req.body.images.filter(Boolean) : [];
     const quantityAdded = parseInt(req.body.quantityAdded || 0) || 0;
 
+    // Create product
     const newProduct = await prisma.product.create({
       data: {
         name,
@@ -580,10 +476,11 @@ const createProduct = async (req, res) => {
         bargainable: bargainable !== undefined ? bargainable : true,
         lowStockThreshold: threshold,
         totalStock: quantityAdded,
-        createdById: req.user.id
+        createdById: req.user.id  // Track who created the product
       }
     });
 
+    // create bargain config if provided and product is bargainable
     if (bargainable !== false && req.body.bargainConfig) {
       const cfg = req.body.bargainConfig;
       await prisma.bargainConfig.create({
@@ -598,13 +495,19 @@ const createProduct = async (req, res) => {
       });
     }
 
+    // create bulk discounts if any
     if (Array.isArray(req.body.bulkDiscounts)) {
       const discounts = req.body.bulkDiscounts
         .map(d => {
           const minQty = parseInt(d.minQty);
           const discount = parseFloat(d.discount);
           if (!minQty || !discount) return null;
-          return { productId: newProduct.id, minQty, discount, unit: d.unit || 'RUPEES' };
+          return {
+            productId: newProduct.id,
+            minQty,
+            discount,
+            unit: d.unit || 'RUPEES'
+          };
         })
         .filter(Boolean);
       if (discounts.length > 0) {
@@ -612,15 +515,17 @@ const createProduct = async (req, res) => {
       }
     }
 
+    // Create product images if provided
     if (images.length > 0) {
-      const imgCreates = images.map((imgUrl, idx) =>
-        prisma.productImage.create({
+      const imgCreates = images.map((imgUrl, idx) => {
+        return prisma.productImage.create({
           data: { productId: newProduct.id, url: imgUrl, isPrimary: idx === 0 }
-        })
-      );
+        });
+      });
       await Promise.all(imgCreates);
     }
 
+    // If initial quantity was added, create inventory log
     if (quantityAdded > 0) {
       await prisma.inventoryLog.create({
         data: {
@@ -634,8 +539,10 @@ const createProduct = async (req, res) => {
 
     console.log('Product created successfully:', newProduct.id);
 
+    // Calculate profit margin
     const profitMargin = ((sellingPrice - cost) / sellingPrice * 100).toFixed(2);
 
+    // Return product with latest data
     const created = await prisma.product.findUnique({
       where: { id: newProduct.id },
       include: { images: true, bargainConfig: true, bulkDiscounts: true }
@@ -644,7 +551,10 @@ const createProduct = async (req, res) => {
     return res.status(201).json({
       success: true,
       message: 'Product created successfully.',
-      data: { ...created, profitMargin: `${profitMargin}%` }
+      data: {
+        ...created,
+        profitMargin: `${profitMargin}%`
+      }
     });
   } catch (error) {
     console.error('Create product error:', error);
@@ -664,24 +574,49 @@ const updateProduct = async (req, res) => {
 
     const productId = parseInt(id);
     if (isNaN(productId)) {
-      return res.status(400).json({ success: false, message: 'Invalid product ID.' });
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid product ID.'
+      });
     }
 
-    const existingProduct = await prisma.product.findUnique({ where: { id: productId } });
+    // Check if product exists
+    const existingProduct = await prisma.product.findUnique({
+      where: { id: productId }
+    });
+
     if (!existingProduct) {
-      return res.status(404).json({ success: false, message: 'Product not found.' });
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found.'
+      });
     }
 
-    const {
-      name, description, category, subCategory,
-      costPrice, baseSellingPrice, bargainable,
-      lowStockThreshold, isActive, bargainConfig, bulkDiscounts, images
+    const { 
+      name, 
+      description, 
+      category, 
+      subCategory,
+      costPrice,
+      baseSellingPrice,
+      bargainable,
+      lowStockThreshold,
+      isActive,
+      bargainConfig,
+      bulkDiscounts,
+      images
     } = req.body;
 
+    // Build update data
     const updateData = {};
 
-    if (name !== undefined) updateData.name = name;
-    if (description !== undefined) updateData.description = description;
+    if (name !== undefined) {
+      updateData.name = name;
+    }
+
+    if (description !== undefined) {
+      updateData.description = description;
+    }
 
     if (category !== undefined) {
       const upperCategory = category.toUpperCase();
@@ -694,12 +629,17 @@ const updateProduct = async (req, res) => {
       updateData.category = upperCategory;
     }
 
-    if (subCategory !== undefined) updateData.subCategory = subCategory;
+    if (subCategory !== undefined) {
+      updateData.subCategory = subCategory;
+    }
 
     if (costPrice !== undefined) {
       const cost = parseFloat(costPrice);
       if (isNaN(cost) || cost < 0) {
-        return res.status(400).json({ success: false, message: 'costPrice must be a valid non-negative number.' });
+        return res.status(400).json({
+          success: false,
+          message: 'costPrice must be a valid non-negative number.'
+        });
       }
       updateData.costPrice = cost;
     }
@@ -707,11 +647,15 @@ const updateProduct = async (req, res) => {
     if (baseSellingPrice !== undefined) {
       const sellingPrice = parseFloat(baseSellingPrice);
       if (isNaN(sellingPrice) || sellingPrice < 0) {
-        return res.status(400).json({ success: false, message: 'baseSellingPrice must be a valid non-negative number.' });
+        return res.status(400).json({
+          success: false,
+          message: 'baseSellingPrice must be a valid non-negative number.'
+        });
       }
       updateData.baseSellingPrice = sellingPrice;
     }
 
+    // Validate pricing logic if both are being updated
     if (updateData.costPrice !== undefined && updateData.baseSellingPrice !== undefined) {
       if (updateData.baseSellingPrice < updateData.costPrice) {
         return res.status(400).json({
@@ -721,41 +665,70 @@ const updateProduct = async (req, res) => {
       }
     }
 
-    if (bargainable !== undefined) updateData.bargainable = bargainable;
+    if (bargainable !== undefined) {
+      updateData.bargainable = bargainable;
+    }
+    // if price changed and bargainConfig exists maybe update tiers? will handle below
 
     if (lowStockThreshold !== undefined) {
       const threshold = parseInt(lowStockThreshold);
       if (isNaN(threshold) || threshold < 0) {
-        return res.status(400).json({ success: false, message: 'lowStockThreshold must be a valid non-negative integer.' });
+        return res.status(400).json({
+          success: false,
+          message: 'lowStockThreshold must be a valid non-negative integer.'
+        });
       }
       updateData.lowStockThreshold = threshold;
     }
 
-    if (isActive !== undefined) updateData.isActive = isActive;
-
-    const hasImages = Array.isArray(images) && images.length > 0;
-    if (Object.keys(updateData).length === 0 && !bargainConfig && !bulkDiscounts && !hasImages) {
-      return res.status(400).json({ success: false, message: 'No fields to update.' });
+    if (isActive !== undefined) {
+      updateData.isActive = isActive;
     }
 
-    await prisma.product.update({ where: { id: productId }, data: updateData });
+    // ===================================================
+    // After building updateData, handle bargainConfig & bulkDiscounts separately below
+    // ===================================================
+
+    // Check if there's anything to update
+    const hasImages = Array.isArray(images) && images.length > 0;
+    if (Object.keys(updateData).length === 0 && !bargainConfig && !bulkDiscounts && !hasImages) {
+      return res.status(400).json({
+        success: false,
+        message: 'No fields to update.'
+      });
+    }
+
+    // Update product
+    const updatedProduct = await prisma.product.update({
+      where: { id: productId },
+      data: updateData
+    });
 
     console.log('Product updated successfully:', productId);
 
+    // -- images handling --
     if (hasImages) {
+      // Accept Supabase Storage HTTPS URLs only.  Any URL that does not start with
+      // 'https://' is silently discarded to prevent path-traversal or injection via
+      // locally-crafted values.
       const validImageUrls = images.filter(url => typeof url === 'string' && url.startsWith('https://'));
       if (validImageUrls.length > 0) {
         await prisma.$transaction([
           prisma.productImage.deleteMany({ where: { productId } }),
           ...validImageUrls.map((imgUrl, idx) =>
             prisma.productImage.create({
-              data: { productId, url: imgUrl, isPrimary: idx === 0 }
+              data: {
+                productId,
+                url: imgUrl,
+                isPrimary: idx === 0
+              }
             })
           )
         ]);
       }
     }
 
+    // -- bargain config handling --
     if (bargainConfig) {
       const existingCfg = await prisma.bargainConfig.findUnique({ where: { productId } });
       const cfgData = {
@@ -773,6 +746,7 @@ const updateProduct = async (req, res) => {
       }
     }
 
+    // -- bulk discounts handling --
     if (Array.isArray(bulkDiscounts)) {
       await prisma.bulkDiscount.deleteMany({ where: { productId } });
       const discounts = bulkDiscounts
@@ -780,7 +754,12 @@ const updateProduct = async (req, res) => {
           const minQty = parseInt(d.minQty);
           const discount = parseFloat(d.discount);
           if (!minQty || !discount) return null;
-          return { productId, minQty, discount, unit: d.unit || 'RUPEES' };
+          return {
+            productId,
+            minQty,
+            discount,
+            unit: d.unit || 'RUPEES'
+          };
         })
         .filter(Boolean);
       if (discounts.length > 0) {
@@ -788,17 +767,22 @@ const updateProduct = async (req, res) => {
       }
     }
 
+    // re-fetch to include relations
     const refreshed = await prisma.product.findUnique({
       where: { id: productId },
       include: { images: true, bargainConfig: true, bulkDiscounts: true }
     });
 
+    // Calculate profit margin
     const profitMargin = ((refreshed.baseSellingPrice - refreshed.costPrice) / refreshed.baseSellingPrice * 100).toFixed(2);
 
     return res.status(200).json({
       success: true,
       message: 'Product updated successfully.',
-      data: { ...refreshed, profitMargin: `${profitMargin}%` }
+      data: {
+        ...refreshed,
+        profitMargin: `${profitMargin}%`
+      }
     });
   } catch (error) {
     console.error('Update product error:', error);
@@ -817,15 +801,28 @@ const deleteProduct = async (req, res) => {
 
     const productId = parseInt(id);
     if (isNaN(productId)) {
-      return res.status(400).json({ success: false, message: 'Invalid product ID.' });
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid product ID.'
+      });
     }
 
-    const existingProduct = await prisma.product.findUnique({ where: { id: productId } });
+    // Check if product exists
+    const existingProduct = await prisma.product.findUnique({
+      where: { id: productId }
+    });
+
     if (!existingProduct) {
-      return res.status(404).json({ success: false, message: 'Product not found.' });
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found.'
+      });
     }
 
-    await prisma.product.delete({ where: { id: productId } });
+    // Hard delete
+    await prisma.product.delete({
+      where: { id: productId }
+    });
 
     console.log('Product deleted successfully:', productId);
 
@@ -843,7 +840,7 @@ const deleteProduct = async (req, res) => {
   }
 };
 
-// Toggle product active status (Admin only)
+// Toggle product active status (Admin only) - Soft deletion
 const toggleProductStatus = async (req, res) => {
   try {
     const { id } = req.params;
@@ -851,17 +848,28 @@ const toggleProductStatus = async (req, res) => {
 
     const productId = parseInt(id);
     if (isNaN(productId)) {
-      return res.status(400).json({ success: false, message: 'Invalid product ID.' });
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid product ID.'
+      });
     }
 
-    const existingProduct = await prisma.product.findUnique({ where: { id: productId } });
+    const existingProduct = await prisma.product.findUnique({
+      where: { id: productId }
+    });
+
     if (!existingProduct) {
-      return res.status(404).json({ success: false, message: 'Product not found.' });
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found.'
+      });
     }
 
     const updatedProduct = await prisma.product.update({
       where: { id: productId },
-      data: { isActive: !existingProduct.isActive }
+      data: {
+        isActive: !existingProduct.isActive
+      }
     });
 
     console.log('Product status toggled:', productId, 'New status:', updatedProduct.isActive);
@@ -902,17 +910,24 @@ const restockProduct = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Product not found.' });
     }
 
+    // Build update data
     const updateData = {};
     if (costPrice !== undefined) updateData.costPrice = parseFloat(costPrice);
     if (baseSellingPrice !== undefined) updateData.baseSellingPrice = parseFloat(baseSellingPrice);
     if (bargainable !== undefined) updateData.bargainable = bargainable;
 
+    // Transaction: update product stock/prices, create log, add images
     const result = await prisma.$transaction(async (prismaTx) => {
       const updated = await prismaTx.product.update({
         where: { id: productId },
-        data: { ...updateData, totalStock: { increment: qty }, updatedAt: new Date() }
+        data: {
+          ...updateData,
+          totalStock: { increment: qty },
+          updatedAt: new Date()
+        }
       });
 
+      // Create inventory log
       await prismaTx.inventoryLog.create({
         data: {
           productId,
@@ -923,6 +938,7 @@ const restockProduct = async (req, res) => {
         }
       });
 
+      // If restocking from profit, deduct from profit ledger (cash reserve)
       if (investmentSource === 'PROFIT') {
         const costPerUnit = parseFloat(costPrice ?? product.costPrice);
         const totalCost = costPerUnit * qty;
@@ -936,10 +952,9 @@ const restockProduct = async (req, res) => {
         });
       }
 
+      // Add images if provided (array of URLs)
       if (Array.isArray(images) && images.length > 0) {
-        const imgCreates = images.map((imgUrl) =>
-          prismaTx.productImage.create({ data: { productId, url: imgUrl } })
-        );
+        const imgCreates = images.map((imgUrl) => prismaTx.productImage.create({ data: { productId, url: imgUrl } }));
         await Promise.all(imgCreates);
       }
 
@@ -948,10 +963,7 @@ const restockProduct = async (req, res) => {
 
     console.log('Product restocked:', productId, 'Qty:', qty);
 
-    const refreshed = await prisma.product.findUnique({
-      where: { id: productId },
-      include: { images: true }
-    });
+    const refreshed = await prisma.product.findUnique({ where: { id: productId }, include: { images: true } });
 
     return res.status(200).json({ success: true, message: 'Product restocked successfully.', data: refreshed });
   } catch (error) {
@@ -989,9 +1001,11 @@ const getLowStockProducts = async (req, res) => {
   try {
     console.log('Get low stock products request');
 
+    // Fetch all active products, filter in memory (Prisma doesn't support column-column comparison in where)
     const products = await prisma.product.findMany({
       where: { isActive: true },
       orderBy: { totalStock: 'asc' },
+      include: { images: true },
       include: productInclude
     });
 
@@ -1014,7 +1028,6 @@ const getLowStockProducts = async (req, res) => {
   }
 };
 
-// Notify when product back in stock
 const notifyMeWhenAvailable = async (req, res) => {
   try {
     const { id } = req.params;
@@ -1025,16 +1038,32 @@ const notifyMeWhenAvailable = async (req, res) => {
 
     const productId = parseInt(id);
     if (isNaN(productId)) {
-      return res.status(400).json({ success: false, message: 'Invalid product ID.' });
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid product ID.'
+      });
     }
 
-    const product = await prisma.product.findUnique({ where: { id: productId } });
+    // Check if product exists
+    const product = await prisma.product.findUnique({
+      where: { id: productId }
+    });
+
     if (!product) {
-      return res.status(404).json({ success: false, message: 'Product not found.' });
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found.'
+      });
     }
 
+    // Check if already registered
     const existing = await prisma.productNotification.findUnique({
-      where: { productId_userId: { productId, userId } }
+      where: {
+        productId_userId: {
+          productId,
+          userId
+        }
+      }
     });
 
     if (existing) {
@@ -1045,8 +1074,13 @@ const notifyMeWhenAvailable = async (req, res) => {
       });
     }
 
+    // Create notification request
     const notification = await prisma.productNotification.create({
-      data: { productId, userId, email: email || req.user.email }
+      data: {
+        productId,
+        userId,
+        email: email || req.user.email
+      }
     });
 
     console.log('Notification registered:', notification.id);
@@ -1065,14 +1099,406 @@ const notifyMeWhenAvailable = async (req, res) => {
   }
 };
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CUSTOMER-FACING PRODUCT CATALOG
+// GET /api/products/customer
+// Public (optionalAuth) — returns active products, supports ?random=true for
+// a fresh shuffle every request (used by the home-page personalised feed).
+// ─────────────────────────────────────────────────────────────────────────────
+const getCustomerProducts = async (req, res) => {
+  try {
+    const {
+      category,
+      search,
+      minPrice,
+      maxPrice,
+      sortBy,
+      page: pageQuery,
+      limit: limitQuery,
+      random
+    } = req.query;
+
+    const shouldRandomize = String(random || '').toLowerCase() === 'true';
+    const page = Math.max(1, parseInt(pageQuery) || 1);
+    const limit = Math.min(parseInt(limitQuery) || 20, 100);
+    const skip = (page - 1) * limit;
+
+    const where = { isActive: true };
+
+    if (category && VALID_CATEGORIES.includes(category.toUpperCase())) {
+      where.category = category.toUpperCase();
+    }
+
+    if (minPrice || maxPrice) {
+      where.baseSellingPrice = {};
+      if (minPrice) where.baseSellingPrice.gte = parseFloat(minPrice);
+      if (maxPrice) where.baseSellingPrice.lte = parseFloat(maxPrice);
+    }
+
+    if (search && typeof search === 'string' && search.trim()) {
+      const s = search.trim();
+      const terms = s.split(/\s+/).filter(Boolean);
+      const orClauses = [
+        { name: { contains: s, mode: 'insensitive' } },
+        { description: { contains: s, mode: 'insensitive' } },
+        { subCategory: { contains: s, mode: 'insensitive' } },
+        { uid: { contains: s, mode: 'insensitive' } }
+      ];
+      if (VALID_CATEGORIES.includes(s.toUpperCase())) {
+        orClauses.push({ category: s.toUpperCase() });
+      }
+      if (terms.length > 0) {
+        orClauses.push({ keywords: { hasSome: terms } });
+      }
+      where.AND = [{ OR: orClauses }];
+    }
+
+    // Random shuffle path — use RANDOM() via raw SQL for true randomness
+    if (shouldRandomize && !search) {
+      const rawWhere = [Prisma.sql`"isActive" = TRUE`];
+      if (where.category) rawWhere.push(Prisma.sql`"category" = ${where.category}`);
+      if (where.baseSellingPrice?.gte !== undefined)
+        rawWhere.push(Prisma.sql`"baseSellingPrice" >= ${where.baseSellingPrice.gte}`);
+      if (where.baseSellingPrice?.lte !== undefined)
+        rawWhere.push(Prisma.sql`"baseSellingPrice" <= ${where.baseSellingPrice.lte}`);
+
+      const whereClause = Prisma.sql`WHERE ${Prisma.join(rawWhere, Prisma.sql` AND `)}`;
+
+      const [randomRows, totalCount] = await Promise.all([
+        prisma.$queryRaw`
+          SELECT "id" FROM "products"
+          ${whereClause}
+          ORDER BY RANDOM()
+          LIMIT ${limit}
+          OFFSET ${skip}
+        `,
+        prisma.product.count({ where })
+      ]);
+
+      const ids = randomRows.map(r => r.id);
+      let products = [];
+      if (ids.length > 0) {
+        const listed = await prisma.product.findMany({
+          where: { id: { in: ids } },
+          include: productInclude
+        });
+        const byId = new Map(listed.map(p => [p.id, p]));
+        products = ids.map(id => byId.get(id)).filter(Boolean);
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'Customer products retrieved successfully.',
+        data: products,
+        count: products.length,
+        pagination: {
+          page, limit,
+          total: Number(totalCount),
+          totalPages: Math.max(1, Math.ceil(Number(totalCount) / limit))
+        }
+      });
+    }
+
+    // Normal (deterministic) path
+    const orderByClause = getOrderByClause(sortBy);
+
+    const [products, totalCount] = await Promise.all([
+      prisma.product.findMany({
+        where,
+        include: productInclude,
+        orderBy: orderByClause,
+        skip,
+        take: limit
+      }),
+      prisma.product.count({ where })
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Customer products retrieved successfully.',
+      data: products,
+      count: products.length,
+      pagination: {
+        page, limit,
+        total: totalCount,
+        totalPages: Math.max(1, Math.ceil(totalCount / limit))
+      }
+    });
+  } catch (error) {
+    console.error('getCustomerProducts error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error while fetching products.'
+    });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CUSTOMER SMART SEARCH
+// GET /api/products/customer/search?search=...&category=...&limit=...
+//
+// Search order (highest relevance first):
+//  1. Exact name match
+//  2. Keyword array contains any search term
+//  3. subCategory match
+//  4. Description / UID partial match
+//  5. Wishlist / order history boost (logged-in users only)
+//
+// No caching — every request hits the DB fresh (Cache-Control: no-store).
+// ─────────────────────────────────────────────────────────────────────────────
+const customerSearch = async (req, res) => {
+  try {
+    // Hard-disable any upstream proxy caching
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Surrogate-Control', 'no-store');
+
+    const {
+      search,
+      category,
+      page: pageQuery,
+      limit: limitQuery,
+      subCategory
+    } = req.query;
+
+    const rawSearch = typeof search === 'string' ? search.trim() : '';
+
+    if (!rawSearch) {
+      return res.status(400).json({
+        success: false,
+        message: 'search query parameter is required.'
+      });
+    }
+
+    if (rawSearch.length > 200) {
+      return res.status(400).json({
+        success: false,
+        message: 'search must be 200 characters or fewer.'
+      });
+    }
+
+    const page = Math.max(1, parseInt(pageQuery) || 1);
+    const limit = Math.min(parseInt(limitQuery) || 20, 100);
+    const skip = (page - 1) * limit;
+
+    const terms = rawSearch.split(/\s+/).filter(Boolean);
+    const upperSearch = rawSearch.toUpperCase();
+
+    // Build base OR search clauses
+    const orClauses = [
+      { name: { contains: rawSearch, mode: 'insensitive' } },
+      { description: { contains: rawSearch, mode: 'insensitive' } },
+      { subCategory: { contains: rawSearch, mode: 'insensitive' } },
+      { uid: { contains: rawSearch, mode: 'insensitive' } }
+    ];
+
+    if (VALID_CATEGORIES.includes(upperSearch)) {
+      orClauses.push({ category: upperSearch });
+    }
+
+    if (terms.length > 0) {
+      orClauses.push({ keywords: { hasSome: terms } });
+    }
+
+    // Subcategory filter from query param
+    if (subCategory && typeof subCategory === 'string' && subCategory.trim()) {
+      orClauses.push({ subCategory: { contains: subCategory.trim(), mode: 'insensitive' } });
+    }
+
+    const where = {
+      isActive: true,
+      AND: [{ OR: orClauses }]
+    };
+
+    // Category filter
+    if (category && VALID_CATEGORIES.includes(category.toUpperCase())) {
+      where.category = category.toUpperCase();
+    }
+
+    // Fetch raw results — no artificial limit, we'll sort + slice
+    const rawProducts = await prisma.product.findMany({
+      where,
+      include: productInclude,
+      take: 200 // upper bound to avoid full-table scans
+    });
+
+    // ── Relevance scoring ──────────────────────────────────────────────────
+    const userId = req.user?.id;
+    let wishedIds = new Set();
+    let orderedIds = new Set();
+
+    if (userId) {
+      const [wishlistItems, recentOrders] = await Promise.all([
+        prisma.wishlist.findMany({
+          where: { userId },
+          select: { productId: true }
+        }),
+        prisma.orderItem.findMany({
+          where: { order: { userId } },
+          select: { productId: true },
+          orderBy: { order: { createdAt: 'desc' } },
+          take: 50
+        })
+      ]);
+      wishedIds = new Set(wishlistItems.map(w => w.productId));
+      orderedIds = new Set(recentOrders.map(o => o.productId));
+    }
+
+    const lowerSearch = rawSearch.toLowerCase();
+
+    const scored = rawProducts.map(p => {
+      let score = 0;
+
+      // Exact name match — highest priority
+      if (p.name.toLowerCase() === lowerSearch) score += 100;
+      // Name starts with search
+      else if (p.name.toLowerCase().startsWith(lowerSearch)) score += 60;
+      // Name contains search
+      else if (p.name.toLowerCase().includes(lowerSearch)) score += 40;
+
+      // Keyword exact match
+      const pKeywords = (p.keywords || []).map(k => k.toLowerCase());
+      if (pKeywords.includes(lowerSearch)) score += 50;
+      // Keyword partial match for each term
+      terms.forEach(t => {
+        if (pKeywords.some(k => k.includes(t.toLowerCase()))) score += 15;
+      });
+
+      // SubCategory match
+      if (p.subCategory && p.subCategory.toLowerCase().includes(lowerSearch)) score += 30;
+
+      // Description match
+      if (p.description && p.description.toLowerCase().includes(lowerSearch)) score += 10;
+
+      // Wishlist boost (user previously wishlisted this product)
+      if (wishedIds.has(p.id)) score += 25;
+
+      // Purchase history boost
+      if (orderedIds.has(p.id)) score += 15;
+
+      // In-stock boost
+      if (p.totalStock > 0) score += 5;
+
+      return { product: p, score };
+    });
+
+    // Sort by score descending, then by name ascending as tiebreaker
+    scored.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.product.name.localeCompare(b.product.name);
+    });
+
+    const total = scored.length;
+    const paginated = scored.slice(skip, skip + limit).map(s => s.product);
+
+    // Save search term for history (fire-and-forget — never blocks response)
+    if (userId && rawSearch.length >= 2) {
+      prisma.searchHistory
+        .upsert({
+          where: { userId_term: { userId, term: rawSearch } },
+          create: { userId, term: rawSearch, searchedAt: new Date() },
+          update: { searchedAt: new Date(), count: { increment: 1 } }
+        })
+        .catch(() => {}); // silently ignore if SearchHistory model doesn't exist yet
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Search results retrieved successfully.',
+      data: paginated,
+      count: paginated.length,
+      pagination: {
+        page, limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit))
+      },
+      meta: { query: rawSearch, terms }
+    });
+  } catch (error) {
+    console.error('customerSearch error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error while searching products.'
+    });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TRACK INTERACTION
+// POST /api/products/track-interaction
+// Body: { productId, type: 'VIEW' | 'SEARCH' | 'WISHLIST', searchTerm? }
+//
+// Saves customer interaction events that feed the recommendation engine.
+// Fire-and-forget from the frontend — errors are swallowed server-side.
+// ─────────────────────────────────────────────────────────────────────────────
+const trackInteraction = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Authentication required.' });
+    }
+
+    const { productId, type, searchTerm } = req.body;
+    const productIdInt = parseInt(productId);
+
+    if (isNaN(productIdInt)) {
+      return res.status(400).json({ success: false, message: 'Invalid productId.' });
+    }
+
+    const VALID_TYPES = ['VIEW', 'SEARCH', 'WISHLIST', 'CART', 'PURCHASE'];
+    const interactionType = String(type || '').toUpperCase();
+    if (!VALID_TYPES.includes(interactionType)) {
+      return res.status(400).json({ success: false, message: `type must be one of: ${VALID_TYPES.join(', ')}` });
+    }
+
+    // Check product exists (quick lookup — no include needed)
+    const product = await prisma.product.findUnique({
+      where: { id: productIdInt },
+      select: { id: true }
+    });
+
+    if (!product) {
+      return res.status(404).json({ success: false, message: 'Product not found.' });
+    }
+
+    // Try to save to ProductInteraction table if it exists in the schema.
+    // If the model doesn't exist (older migration), silently succeed.
+    try {
+      await prisma.productInteraction.create({
+        data: {
+          userId,
+          productId: productIdInt,
+          type: interactionType,
+          searchTerm: (interactionType === 'SEARCH' && searchTerm)
+            ? String(searchTerm).slice(0, 200)
+            : null
+        }
+      });
+    } catch (modelErr) {
+      // ProductInteraction model may not be migrated yet — fail silently
+      console.log('ProductInteraction model not ready, skipping:', modelErr.message);
+    }
+
+    return res.status(200).json({ success: true, message: 'Interaction tracked.' });
+  } catch (error) {
+    console.error('trackInteraction error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error while tracking interaction.'
+    });
+  }
+};
+
+
 module.exports = {
   getAllProducts,
-  getCustomerProducts,
-  searchCustomerProducts,
   getProductById,
   getProductsByCategory,
   getRecommendedProducts,
-  trackInteractionHandler,
+  getCustomerProducts,
+  customerSearch,
+  trackInteraction,
   createProduct,
   updateProduct,
   deleteProduct,
