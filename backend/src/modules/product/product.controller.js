@@ -204,16 +204,33 @@ const getAllProducts = async (req, res) => {
     }
 
     if (search) {
-      const terms = search.split(/\s+/).filter(Boolean);
+      const trimmedSearch = search.trim();
+      const lowerSearch   = trimmedSearch.toLowerCase();
+      const upperSearch   = trimmedSearch.toUpperCase();
+
+      // Text field matches — all case-insensitive via Prisma mode
       const orClauses = [
-        { uid: { contains: search, mode: 'insensitive' } },
-        { name: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } },
-        { subCategory: { contains: search, mode: 'insensitive' } }
+        { uid:         { contains: trimmedSearch, mode: 'insensitive' } },
+        { name:        { contains: trimmedSearch, mode: 'insensitive' } },
+        { description: { contains: trimmedSearch, mode: 'insensitive' } },
+        { subCategory: { contains: trimmedSearch, mode: 'insensitive' } },
+        // Allow typing the category name (e.g. stationery, BOOKS)
+        { category: { equals: upperSearch } }
       ];
-      if (terms.length > 0) {
-        orClauses.push({ keywords: { hasSome: terms } });
-      }
+
+      // Keywords: Prisma hasSome does exact string match on array elements,
+      // so we send every casing variant of every word so camlin, Camlin,
+      // CAMLIN all hit a keyword stored as any of those variants.
+      const terms = trimmedSearch.split(/\s+/).filter(Boolean);
+      const termVariants = new Set([
+        trimmedSearch, lowerSearch, upperSearch,
+        ...terms,
+        ...terms.map(t => t.toLowerCase()),
+        ...terms.map(t => t.toUpperCase()),
+        ...terms.map(t => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase())
+      ]);
+      orClauses.push({ keywords: { hasSome: [...termVariants] } });
+
       where.AND = [{ OR: orClauses }];
     }
 
