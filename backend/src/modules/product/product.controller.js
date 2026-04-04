@@ -109,14 +109,6 @@ const getValidatedCustomerQuery = (req, { requireSearch = false } = {}) => {
 
 /**
  * Build SQL WHERE clause for customer-visible product listing/search.
- * @param {{
- *  category?: string,
- *  minPrice?: number,
- *  maxPrice?: number,
- *  bargainable?: boolean,
- *  search?: string
- * }} params
- * @returns {import('@prisma/client').Prisma.Sql}
  */
 const buildCustomerWhereSql = ({ category, minPrice, maxPrice, bargainable, search } = {}) => {
   const clauses = [
@@ -152,10 +144,6 @@ const buildCustomerWhereSql = ({ category, minPrice, maxPrice, bargainable, sear
 
 /**
  * Build pagination metadata.
- * @param {number} total
- * @param {number} page
- * @param {number} limit
- * @returns {{page:number, limit:number, total:number, totalPages:number}}
  */
 const buildCustomerPagination = (total, page, limit) => ({
   page,
@@ -166,8 +154,6 @@ const buildCustomerPagination = (total, page, limit) => ({
 
 /**
  * Fetch products by id preserving input id order.
- * @param {number[]} ids
- * @returns {Promise<object[]>}
  */
 const fetchProductsByIdOrder = async (ids) => {
   if (!ids.length) return [];
@@ -179,80 +165,64 @@ const fetchProductsByIdOrder = async (ids) => {
   return ids.map((id) => byId.get(id)).filter(Boolean);
 };
 
-// Get all products with filters (Public)
-// Get all products with filters (Public)
+// ─── Recommendations & interaction tracking ───────────────────────────────────
+const { getRecommendedProductsForUser, trackInteraction } = require('./recommendations.service');
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Get all products with filters (Admin / internal use)
 const getAllProducts = async (req, res) => {
   try {
-
-    const { 
-      isActive, 
-      category, 
-      minPrice, 
-      maxPrice, 
+    const {
+      isActive,
+      category,
+      minPrice,
+      maxPrice,
       search,
       bargainable,
-      lowStock 
+      lowStock
     } = req.query;
 
-    // Build filter conditions
     const where = {};
 
-    // Filter by active status
     if (isActive !== undefined) {
       where.isActive = isActive === 'true';
     }
 
-    // Filter by category
     if (category && VALID_CATEGORIES.includes(category.toUpperCase())) {
       where.category = category.toUpperCase();
     }
 
-    // Filter by bargainable status
     if (bargainable !== undefined) {
       where.bargainable = bargainable === 'true';
     }
 
-    // Filter by price range (baseSellingPrice)
     if (minPrice || maxPrice) {
       where.baseSellingPrice = {};
       if (minPrice) where.baseSellingPrice.gte = parseFloat(minPrice);
       if (maxPrice) where.baseSellingPrice.lte = parseFloat(maxPrice);
     }
 
-    // Search in uid, name, description, subCategory, and keywords
     if (search) {
       const terms = search.split(/\s+/).filter(Boolean);
-
-      // Create OR conditions: uid contains, name contains, description contains, subCategory contains
       const orClauses = [
         { uid: { contains: search, mode: 'insensitive' } },
         { name: { contains: search, mode: 'insensitive' } },
         { description: { contains: search, mode: 'insensitive' } },
         { subCategory: { contains: search, mode: 'insensitive' } }
       ];
-
-      // If there are distinct terms, search keywords array for any match
       if (terms.length > 0) {
         orClauses.push({ keywords: { hasSome: terms } });
       }
-
-      where.AND = [
-        { OR: orClauses }
-      ];
+      where.AND = [{ OR: orClauses }];
     }
 
     const products = await prisma.product.findMany({
       where,
-      include: {
-        images: true  // ✅ CRITICAL: Include images
-      },
       include: productInclude,
-      orderBy: {
-        createdAt: 'desc'
-      }
+      orderBy: { createdAt: 'desc' }
     });
 
-    // If lowStock filter is true, filter products below threshold (use in-memory filter)
     let filteredProducts = products;
     if (lowStock === 'true') {
       filteredProducts = products.filter(p => p.totalStock <= p.lowStockThreshold);
@@ -318,7 +288,6 @@ const getProductsByCategory = async (req, res) => {
     const { category } = req.params;
 
     const upperCategory = category.toUpperCase();
-    
     if (!VALID_CATEGORIES.includes(upperCategory)) {
       return res.status(400).json({
         success: false,
@@ -327,14 +296,9 @@ const getProductsByCategory = async (req, res) => {
     }
 
     const products = await prisma.product.findMany({
-      where: {
-        category: upperCategory,
-        isActive: true
-      },
+      where: { category: upperCategory, isActive: true },
       include: { images: true },
-      orderBy: {
-        name: 'asc'
-      }
+      orderBy: { name: 'asc' }
     });
 
     console.log(`Found ${products.length} products in category ${upperCategory}`);
@@ -354,9 +318,7 @@ const getProductsByCategory = async (req, res) => {
   }
 };
 
-const { getRecommendedProductsForUser } = require('./recommendations.service');
-
-// Get recommended products (based on wishlist/cart/order history)
+// Get recommended products (based on wishlist/cart/order/view/search history)
 const getRecommendedProducts = async (req, res) => {
   try {
     const userId = req.user?.id;
@@ -382,6 +344,33 @@ const getRecommendedProducts = async (req, res) => {
       success: false,
       message: 'Internal server error while fetching recommended products.'
     });
+  }
+};
+
+/**
+ * POST /api/products/track-interaction
+ * Body: { productId: number, type: 'VIEW' | 'SEARCH', searchTerm?: string }
+ *
+ * Fire-and-forget: responds 200 immediately, tracks in background.
+ * Auth required so we know which user to attribute the signal to.
+ */
+const trackInteractionHandler = async (req, res) => {
+  // Respond immediately — tracking must never slow the client
+  res.status(200).json({ success: true });
+
+  try {
+    const userId = req.user?.id;
+    if (!userId) return;
+
+    const { productId, type, searchTerm } = req.body;
+    const pid = parseInt(productId);
+
+    if (!pid || !['VIEW', 'SEARCH'].includes(type)) return;
+
+    await trackInteraction(userId, pid, type, searchTerm || null);
+  } catch (err) {
+    // Non-critical — never surface analytics errors to the client
+    console.error('track-interaction background error:', err.message);
   }
 };
 
@@ -429,10 +418,7 @@ const getCustomerProducts = async (req, res) => {
     });
   } catch (error) {
     if (error instanceof QueryValidationError) {
-      return res.status(400).json({
-        success: false,
-        message: error.message
-      });
+      return res.status(400).json({ success: false, message: error.message });
     }
     console.error('Get customer products error:', error);
     return res.status(500).json({
@@ -486,10 +472,7 @@ const searchCustomerProducts = async (req, res) => {
     });
   } catch (error) {
     if (error instanceof QueryValidationError) {
-      return res.status(400).json({
-        success: false,
-        message: error.message
-      });
+      return res.status(400).json({ success: false, message: error.message });
     }
     console.error('Search customer products error:', error);
     return res.status(500).json({
@@ -505,10 +488,10 @@ const createProduct = async (req, res) => {
     console.log('Create product request received');
     console.log('Request body:', req.body);
 
-    const { 
-      name, 
-      description, 
-      category, 
+    const {
+      name,
+      description,
+      category,
       subCategory,
       costPrice,
       baseSellingPrice,
@@ -516,7 +499,6 @@ const createProduct = async (req, res) => {
       lowStockThreshold
     } = req.body;
 
-    // Validate required fields
     if (!name || !category || !subCategory || costPrice === undefined || baseSellingPrice === undefined || lowStockThreshold === undefined) {
       return res.status(400).json({
         success: false,
@@ -524,7 +506,6 @@ const createProduct = async (req, res) => {
       });
     }
 
-    // Validate category
     const upperCategory = category.toUpperCase();
     if (!VALID_CATEGORIES.includes(upperCategory)) {
       return res.status(400).json({
@@ -533,7 +514,6 @@ const createProduct = async (req, res) => {
       });
     }
 
-    // Validate costPrice
     const cost = parseFloat(costPrice);
     if (isNaN(cost) || cost < 0) {
       return res.status(400).json({
@@ -542,7 +522,6 @@ const createProduct = async (req, res) => {
       });
     }
 
-    // Validate baseSellingPrice
     const sellingPrice = parseFloat(baseSellingPrice);
     if (isNaN(sellingPrice) || sellingPrice < 0) {
       return res.status(400).json({
@@ -551,7 +530,6 @@ const createProduct = async (req, res) => {
       });
     }
 
-    // Business logic: selling price should be >= cost price
     if (sellingPrice < cost) {
       return res.status(400).json({
         success: false,
@@ -559,7 +537,6 @@ const createProduct = async (req, res) => {
       });
     }
 
-    // Validate lowStockThreshold
     const threshold = parseInt(lowStockThreshold);
     if (isNaN(threshold) || threshold < 0) {
       return res.status(400).json({
@@ -568,13 +545,12 @@ const createProduct = async (req, res) => {
       });
     }
 
-    // Create product
-    // Prepare image and keyword data if provided
-    const keywordArray = Array.isArray(req.body.keywords) ? req.body.keywords.map(k => String(k).trim()).filter(Boolean) : [];
+    const keywordArray = Array.isArray(req.body.keywords)
+      ? req.body.keywords.map(k => String(k).trim()).filter(Boolean)
+      : [];
     const images = Array.isArray(req.body.images) ? req.body.images.filter(Boolean) : [];
     const quantityAdded = parseInt(req.body.quantityAdded || 0) || 0;
 
-    // Create product
     const newProduct = await prisma.product.create({
       data: {
         name,
@@ -587,11 +563,10 @@ const createProduct = async (req, res) => {
         bargainable: bargainable !== undefined ? bargainable : true,
         lowStockThreshold: threshold,
         totalStock: quantityAdded,
-        createdById: req.user.id  // Track who created the product
+        createdById: req.user.id
       }
     });
 
-    // create bargain config if provided and product is bargainable
     if (bargainable !== false && req.body.bargainConfig) {
       const cfg = req.body.bargainConfig;
       await prisma.bargainConfig.create({
@@ -606,19 +581,13 @@ const createProduct = async (req, res) => {
       });
     }
 
-    // create bulk discounts if any
     if (Array.isArray(req.body.bulkDiscounts)) {
       const discounts = req.body.bulkDiscounts
         .map(d => {
           const minQty = parseInt(d.minQty);
           const discount = parseFloat(d.discount);
           if (!minQty || !discount) return null;
-          return {
-            productId: newProduct.id,
-            minQty,
-            discount,
-            unit: d.unit || 'RUPEES'
-          };
+          return { productId: newProduct.id, minQty, discount, unit: d.unit || 'RUPEES' };
         })
         .filter(Boolean);
       if (discounts.length > 0) {
@@ -626,17 +595,15 @@ const createProduct = async (req, res) => {
       }
     }
 
-    // Create product images if provided
     if (images.length > 0) {
-      const imgCreates = images.map((imgUrl, idx) => {
-        return prisma.productImage.create({
+      const imgCreates = images.map((imgUrl, idx) =>
+        prisma.productImage.create({
           data: { productId: newProduct.id, url: imgUrl, isPrimary: idx === 0 }
-        });
-      });
+        })
+      );
       await Promise.all(imgCreates);
     }
 
-    // If initial quantity was added, create inventory log
     if (quantityAdded > 0) {
       await prisma.inventoryLog.create({
         data: {
@@ -650,10 +617,8 @@ const createProduct = async (req, res) => {
 
     console.log('Product created successfully:', newProduct.id);
 
-    // Calculate profit margin
     const profitMargin = ((sellingPrice - cost) / sellingPrice * 100).toFixed(2);
 
-    // Return product with latest data
     const created = await prisma.product.findUnique({
       where: { id: newProduct.id },
       include: { images: true, bargainConfig: true, bulkDiscounts: true }
@@ -662,10 +627,7 @@ const createProduct = async (req, res) => {
     return res.status(201).json({
       success: true,
       message: 'Product created successfully.',
-      data: {
-        ...created,
-        profitMargin: `${profitMargin}%`
-      }
+      data: { ...created, profitMargin: `${profitMargin}%` }
     });
   } catch (error) {
     console.error('Create product error:', error);
@@ -685,49 +647,24 @@ const updateProduct = async (req, res) => {
 
     const productId = parseInt(id);
     if (isNaN(productId)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid product ID.'
-      });
+      return res.status(400).json({ success: false, message: 'Invalid product ID.' });
     }
 
-    // Check if product exists
-    const existingProduct = await prisma.product.findUnique({
-      where: { id: productId }
-    });
-
+    const existingProduct = await prisma.product.findUnique({ where: { id: productId } });
     if (!existingProduct) {
-      return res.status(404).json({
-        success: false,
-        message: 'Product not found.'
-      });
+      return res.status(404).json({ success: false, message: 'Product not found.' });
     }
 
-    const { 
-      name, 
-      description, 
-      category, 
-      subCategory,
-      costPrice,
-      baseSellingPrice,
-      bargainable,
-      lowStockThreshold,
-      isActive,
-      bargainConfig,
-      bulkDiscounts,
-      images
+    const {
+      name, description, category, subCategory,
+      costPrice, baseSellingPrice, bargainable,
+      lowStockThreshold, isActive, bargainConfig, bulkDiscounts, images
     } = req.body;
 
-    // Build update data
     const updateData = {};
 
-    if (name !== undefined) {
-      updateData.name = name;
-    }
-
-    if (description !== undefined) {
-      updateData.description = description;
-    }
+    if (name !== undefined) updateData.name = name;
+    if (description !== undefined) updateData.description = description;
 
     if (category !== undefined) {
       const upperCategory = category.toUpperCase();
@@ -740,17 +677,12 @@ const updateProduct = async (req, res) => {
       updateData.category = upperCategory;
     }
 
-    if (subCategory !== undefined) {
-      updateData.subCategory = subCategory;
-    }
+    if (subCategory !== undefined) updateData.subCategory = subCategory;
 
     if (costPrice !== undefined) {
       const cost = parseFloat(costPrice);
       if (isNaN(cost) || cost < 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'costPrice must be a valid non-negative number.'
-        });
+        return res.status(400).json({ success: false, message: 'costPrice must be a valid non-negative number.' });
       }
       updateData.costPrice = cost;
     }
@@ -758,15 +690,11 @@ const updateProduct = async (req, res) => {
     if (baseSellingPrice !== undefined) {
       const sellingPrice = parseFloat(baseSellingPrice);
       if (isNaN(sellingPrice) || sellingPrice < 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'baseSellingPrice must be a valid non-negative number.'
-        });
+        return res.status(400).json({ success: false, message: 'baseSellingPrice must be a valid non-negative number.' });
       }
       updateData.baseSellingPrice = sellingPrice;
     }
 
-    // Validate pricing logic if both are being updated
     if (updateData.costPrice !== undefined && updateData.baseSellingPrice !== undefined) {
       if (updateData.baseSellingPrice < updateData.costPrice) {
         return res.status(400).json({
@@ -776,70 +704,41 @@ const updateProduct = async (req, res) => {
       }
     }
 
-    if (bargainable !== undefined) {
-      updateData.bargainable = bargainable;
-    }
-    // if price changed and bargainConfig exists maybe update tiers? will handle below
+    if (bargainable !== undefined) updateData.bargainable = bargainable;
 
     if (lowStockThreshold !== undefined) {
       const threshold = parseInt(lowStockThreshold);
       if (isNaN(threshold) || threshold < 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'lowStockThreshold must be a valid non-negative integer.'
-        });
+        return res.status(400).json({ success: false, message: 'lowStockThreshold must be a valid non-negative integer.' });
       }
       updateData.lowStockThreshold = threshold;
     }
 
-    if (isActive !== undefined) {
-      updateData.isActive = isActive;
-    }
+    if (isActive !== undefined) updateData.isActive = isActive;
 
-    // ===================================================
-    // After building updateData, handle bargainConfig & bulkDiscounts separately below
-    // ===================================================
-
-    // Check if there's anything to update
     const hasImages = Array.isArray(images) && images.length > 0;
     if (Object.keys(updateData).length === 0 && !bargainConfig && !bulkDiscounts && !hasImages) {
-      return res.status(400).json({
-        success: false,
-        message: 'No fields to update.'
-      });
+      return res.status(400).json({ success: false, message: 'No fields to update.' });
     }
 
-    // Update product
-    const updatedProduct = await prisma.product.update({
-      where: { id: productId },
-      data: updateData
-    });
+    await prisma.product.update({ where: { id: productId }, data: updateData });
 
     console.log('Product updated successfully:', productId);
 
-    // -- images handling --
     if (hasImages) {
-      // Accept Supabase Storage HTTPS URLs only.  Any URL that does not start with
-      // 'https://' is silently discarded to prevent path-traversal or injection via
-      // locally-crafted values.
       const validImageUrls = images.filter(url => typeof url === 'string' && url.startsWith('https://'));
       if (validImageUrls.length > 0) {
         await prisma.$transaction([
           prisma.productImage.deleteMany({ where: { productId } }),
           ...validImageUrls.map((imgUrl, idx) =>
             prisma.productImage.create({
-              data: {
-                productId,
-                url: imgUrl,
-                isPrimary: idx === 0
-              }
+              data: { productId, url: imgUrl, isPrimary: idx === 0 }
             })
           )
         ]);
       }
     }
 
-    // -- bargain config handling --
     if (bargainConfig) {
       const existingCfg = await prisma.bargainConfig.findUnique({ where: { productId } });
       const cfgData = {
@@ -857,7 +756,6 @@ const updateProduct = async (req, res) => {
       }
     }
 
-    // -- bulk discounts handling --
     if (Array.isArray(bulkDiscounts)) {
       await prisma.bulkDiscount.deleteMany({ where: { productId } });
       const discounts = bulkDiscounts
@@ -865,12 +763,7 @@ const updateProduct = async (req, res) => {
           const minQty = parseInt(d.minQty);
           const discount = parseFloat(d.discount);
           if (!minQty || !discount) return null;
-          return {
-            productId,
-            minQty,
-            discount,
-            unit: d.unit || 'RUPEES'
-          };
+          return { productId, minQty, discount, unit: d.unit || 'RUPEES' };
         })
         .filter(Boolean);
       if (discounts.length > 0) {
@@ -878,22 +771,17 @@ const updateProduct = async (req, res) => {
       }
     }
 
-    // re-fetch to include relations
     const refreshed = await prisma.product.findUnique({
       where: { id: productId },
       include: { images: true, bargainConfig: true, bulkDiscounts: true }
     });
 
-    // Calculate profit margin
     const profitMargin = ((refreshed.baseSellingPrice - refreshed.costPrice) / refreshed.baseSellingPrice * 100).toFixed(2);
 
     return res.status(200).json({
       success: true,
       message: 'Product updated successfully.',
-      data: {
-        ...refreshed,
-        profitMargin: `${profitMargin}%`
-      }
+      data: { ...refreshed, profitMargin: `${profitMargin}%` }
     });
   } catch (error) {
     console.error('Update product error:', error);
@@ -912,28 +800,15 @@ const deleteProduct = async (req, res) => {
 
     const productId = parseInt(id);
     if (isNaN(productId)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid product ID.'
-      });
+      return res.status(400).json({ success: false, message: 'Invalid product ID.' });
     }
 
-    // Check if product exists
-    const existingProduct = await prisma.product.findUnique({
-      where: { id: productId }
-    });
-
+    const existingProduct = await prisma.product.findUnique({ where: { id: productId } });
     if (!existingProduct) {
-      return res.status(404).json({
-        success: false,
-        message: 'Product not found.'
-      });
+      return res.status(404).json({ success: false, message: 'Product not found.' });
     }
 
-    // Hard delete
-    await prisma.product.delete({
-      where: { id: productId }
-    });
+    await prisma.product.delete({ where: { id: productId } });
 
     console.log('Product deleted successfully:', productId);
 
@@ -951,7 +826,7 @@ const deleteProduct = async (req, res) => {
   }
 };
 
-// Toggle product active status (Admin only) - Soft deletion
+// Toggle product active status (Admin only)
 const toggleProductStatus = async (req, res) => {
   try {
     const { id } = req.params;
@@ -959,28 +834,17 @@ const toggleProductStatus = async (req, res) => {
 
     const productId = parseInt(id);
     if (isNaN(productId)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid product ID.'
-      });
+      return res.status(400).json({ success: false, message: 'Invalid product ID.' });
     }
 
-    const existingProduct = await prisma.product.findUnique({
-      where: { id: productId }
-    });
-
+    const existingProduct = await prisma.product.findUnique({ where: { id: productId } });
     if (!existingProduct) {
-      return res.status(404).json({
-        success: false,
-        message: 'Product not found.'
-      });
+      return res.status(404).json({ success: false, message: 'Product not found.' });
     }
 
     const updatedProduct = await prisma.product.update({
       where: { id: productId },
-      data: {
-        isActive: !existingProduct.isActive
-      }
+      data: { isActive: !existingProduct.isActive }
     });
 
     console.log('Product status toggled:', productId, 'New status:', updatedProduct.isActive);
@@ -1021,24 +885,17 @@ const restockProduct = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Product not found.' });
     }
 
-    // Build update data
     const updateData = {};
     if (costPrice !== undefined) updateData.costPrice = parseFloat(costPrice);
     if (baseSellingPrice !== undefined) updateData.baseSellingPrice = parseFloat(baseSellingPrice);
     if (bargainable !== undefined) updateData.bargainable = bargainable;
 
-    // Transaction: update product stock/prices, create log, add images
     const result = await prisma.$transaction(async (prismaTx) => {
       const updated = await prismaTx.product.update({
         where: { id: productId },
-        data: {
-          ...updateData,
-          totalStock: { increment: qty },
-          updatedAt: new Date()
-        }
+        data: { ...updateData, totalStock: { increment: qty }, updatedAt: new Date() }
       });
 
-      // Create inventory log
       await prismaTx.inventoryLog.create({
         data: {
           productId,
@@ -1049,7 +906,6 @@ const restockProduct = async (req, res) => {
         }
       });
 
-      // If restocking from profit, deduct from profit ledger (cash reserve)
       if (investmentSource === 'PROFIT') {
         const costPerUnit = parseFloat(costPrice ?? product.costPrice);
         const totalCost = costPerUnit * qty;
@@ -1063,9 +919,10 @@ const restockProduct = async (req, res) => {
         });
       }
 
-      // Add images if provided (array of URLs)
       if (Array.isArray(images) && images.length > 0) {
-        const imgCreates = images.map((imgUrl) => prismaTx.productImage.create({ data: { productId, url: imgUrl } }));
+        const imgCreates = images.map((imgUrl) =>
+          prismaTx.productImage.create({ data: { productId, url: imgUrl } })
+        );
         await Promise.all(imgCreates);
       }
 
@@ -1074,7 +931,10 @@ const restockProduct = async (req, res) => {
 
     console.log('Product restocked:', productId, 'Qty:', qty);
 
-    const refreshed = await prisma.product.findUnique({ where: { id: productId }, include: { images: true } });
+    const refreshed = await prisma.product.findUnique({
+      where: { id: productId },
+      include: { images: true }
+    });
 
     return res.status(200).json({ success: true, message: 'Product restocked successfully.', data: refreshed });
   } catch (error) {
@@ -1112,11 +972,9 @@ const getLowStockProducts = async (req, res) => {
   try {
     console.log('Get low stock products request');
 
-    // Fetch all active products, filter in memory (Prisma doesn't support column-column comparison in where)
     const products = await prisma.product.findMany({
       where: { isActive: true },
       orderBy: { totalStock: 'asc' },
-      include: { images: true },
       include: productInclude
     });
 
@@ -1139,6 +997,7 @@ const getLowStockProducts = async (req, res) => {
   }
 };
 
+// Notify when product back in stock
 const notifyMeWhenAvailable = async (req, res) => {
   try {
     const { id } = req.params;
@@ -1149,32 +1008,16 @@ const notifyMeWhenAvailable = async (req, res) => {
 
     const productId = parseInt(id);
     if (isNaN(productId)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid product ID.'
-      });
+      return res.status(400).json({ success: false, message: 'Invalid product ID.' });
     }
 
-    // Check if product exists
-    const product = await prisma.product.findUnique({
-      where: { id: productId }
-    });
-
+    const product = await prisma.product.findUnique({ where: { id: productId } });
     if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: 'Product not found.'
-      });
+      return res.status(404).json({ success: false, message: 'Product not found.' });
     }
 
-    // Check if already registered
     const existing = await prisma.productNotification.findUnique({
-      where: {
-        productId_userId: {
-          productId,
-          userId
-        }
-      }
+      where: { productId_userId: { productId, userId } }
     });
 
     if (existing) {
@@ -1185,13 +1028,8 @@ const notifyMeWhenAvailable = async (req, res) => {
       });
     }
 
-    // Create notification request
     const notification = await prisma.productNotification.create({
-      data: {
-        productId,
-        userId,
-        email: email || req.user.email
-      }
+      data: { productId, userId, email: email || req.user.email }
     });
 
     console.log('Notification registered:', notification.id);
@@ -1210,7 +1048,6 @@ const notifyMeWhenAvailable = async (req, res) => {
   }
 };
 
-
 module.exports = {
   getAllProducts,
   getCustomerProducts,
@@ -1218,6 +1055,7 @@ module.exports = {
   getProductById,
   getProductsByCategory,
   getRecommendedProducts,
+  trackInteractionHandler,
   createProduct,
   updateProduct,
   deleteProduct,
