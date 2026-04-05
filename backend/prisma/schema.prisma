@@ -1,10 +1,10 @@
 // =====================================================
 // STATIONERY WORLD — COMPLETE PRISMA SCHEMA
-// Version: 2.1.0
-// Changes from previous:
-//   - Order: added paidAt, refundedAt, refundAmount, refundIssued, paymentMethod
-//   - OrderStatus: removed duplicate CANCELED (kept CANCELLED only)
-//   - User: cleaned up relation names
+// Version: 3.0.0
+// Changes from v2.1.0:
+//   - User: added lastSeenAt (sliding JWT / 10-day auto-logout)
+//   - ProductVariantGroup: new model linking similar products (colors, sizes, types)
+//   - AdminPaymentSettings: UPI ID + QR code per admin
 // =====================================================
 
 generator client {
@@ -12,8 +12,8 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
@@ -40,6 +40,12 @@ model User {
   role         Role    @default(CUSTOMER)
   isActive     Boolean @default(true)
 
+  // ── Sliding-session tracking ──────────────────────────────────────────────
+  // Updated on every authenticated request via authMiddleware.
+  // If now - lastSeenAt > 10 days the token is treated as expired even if the
+  // JWT signature is still valid — user must log in again.
+  lastSeenAt   DateTime @default(now())
+
   // Relations
   orders               Order[]               @relation("UserOrders")
   adminOrders          Order[]               @relation("AdminOrders")
@@ -58,6 +64,7 @@ model User {
   grantedBargains      BargainPermission[]   @relation("GrantedBargains")
   bargainRequests      BargainRequest[]      @relation("UserBargainRequests")
   bargainReviewedRequests BargainRequest[]   @relation("BargainRequestReview")
+  paymentSettings      AdminPaymentSettings?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -118,18 +125,22 @@ model Product {
   createdBy   User? @relation("ProductCreatedBy", fields: [createdById], references: [id])
   createdById Int?
 
+  // Variant group link
+  variantGroup   ProductVariantGroup? @relation(fields: [variantGroupId], references: [id])
+  variantGroupId Int?
+
   // Relations
-  images          ProductImage[]
-  inventoryLogs   InventoryLog[]
-  bargainConfig     BargainConfig?
+  images             ProductImage[]
+  inventoryLogs      InventoryLog[]
+  bargainConfig      BargainConfig?
   bargainPermissions BargainPermission[]  @relation("ProductBargainPermissions")
-  bargainRequests   BargainRequest[]     @relation("ProductBargainRequests")
-  orderItems        OrderItem[]
-  wishlists         Wishlist[]
-  bargainAttempts   BargainAttempt[]
-  cartItems         Cart[]
-  notifications     ProductNotification[]
-  bulkDiscounts     BulkDiscount[]
+  bargainRequests    BargainRequest[]     @relation("ProductBargainRequests")
+  orderItems         OrderItem[]
+  wishlists          Wishlist[]
+  bargainAttempts    BargainAttempt[]
+  cartItems          Cart[]
+  notifications      ProductNotification[]
+  bulkDiscounts      BulkDiscount[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -138,6 +149,50 @@ model Product {
   @@index([name])
   @@index([uid])
   @@index([category])
+  @@index([variantGroupId])
+}
+
+// =====================================================
+// PRODUCT VARIANT GROUPS
+// Links similar products that differ only by color/size/type/style.
+//
+// Examples:
+//   Linc Pentonic pens → group "Linc Pentonic", type COLOR
+//     - Blue variant  (Product id=1)
+//     - Black variant (Product id=2)
+//     - Red variant   (Product id=3)
+//
+//   Classmate Notebook → group "Classmate NB 160pg", type SIZE
+//     - Plain 160pg   (Product id=4)
+//     - Ruled 160pg   (Product id=5)
+//     - Plain 240pg   (Product id=6)
+//
+//   Face-changing Keychain → group "Face Keychain", type STYLE
+//     - Shinchan       (Product id=7)
+//     - Doraemon       (Product id=8)
+//     - Capybara       (Product id=9)
+// =====================================================
+
+model ProductVariantGroup {
+  id          Int                 @id @default(autoincrement())
+  name        String              // Display name for the group
+  variantType VariantType         // COLOR | SIZE | TYPE | STYLE
+  description String?
+
+  products    Product[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("product_variant_groups")
+  @@index([variantType])
+}
+
+enum VariantType {
+  COLOR   // e.g. Blue/Black/Red pen
+  SIZE    // e.g. 160pg/240pg/320pg notebook
+  TYPE    // e.g. Plain/Ruled/Single-rule pages
+  STYLE   // e.g. Shinchan/Doraemon/Capybara keychain
 }
 
 model ProductImage {
@@ -147,10 +202,12 @@ model ProductImage {
   url       String
   altText   String?
   isPrimary Boolean @default(false)
+  position  Int     @default(0)   // explicit ordering — 0 = primary slot
 
   createdAt DateTime @default(now())
 
   @@map("product_images")
+  @@index([productId, position])
 }
 
 model InventoryLog {
@@ -188,29 +245,27 @@ enum Category {
 // =====================================================
 
 model BargainConfig {
-  id          Int     @id @default(autoincrement())
-  product     Product @relation(fields: [productId], references: [id], onDelete: Cascade)
-  productId   Int     @unique
-  
-  // Existing fields
+  id        Int     @id @default(autoincrement())
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId Int     @unique
+
   tier1Price  Float
   tier2Price  Float
   tier3Price  Float
   maxAttempts Int     @default(3)
   isActive    Boolean @default(true)
-  
-  // ✨ ADD THESE NEW FIELDS:
-  bargainPercentageLimit Float?
-  bargainAmountLimit     Float?
+
+  bargainPercentageLimit        Float?
+  bargainAmountLimit            Float?
   minimumCartValueForBargain    Float?
   minimumCustomerOrdersRequired Int?   @default(0)
-  bargainExpiryDate  DateTime?
-  bargainStockLimit  Int?
-  bargainStockUsed   Int       @default(0)
-  cooldownMinutes Int @default(30)
-  lockDurationMinutes Int @default(30)
-  requiresLogin Boolean @default(true)
-  allowCouponCombination Boolean @default(false)
+  bargainExpiryDate             DateTime?
+  bargainStockLimit             Int?
+  bargainStockUsed              Int       @default(0)
+  cooldownMinutes               Int       @default(30)
+  lockDurationMinutes           Int       @default(30)
+  requiresLogin                 Boolean   @default(true)
+  allowCouponCombination        Boolean   @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -220,7 +275,6 @@ model BargainConfig {
   @@index([bargainExpiryDate])
 }
 
-// Permission table allowing admins to grant special bargain access to individual users
 model BargainPermission {
   id          Int      @id @default(autoincrement())
   user        User     @relation("UserBargainPermissions", fields: [userId], references: [id], onDelete: Cascade)
@@ -246,14 +300,14 @@ model BargainRequest {
   productId   Int
 
   status      BargainRequestStatus  @default(PENDING)
-  note        String?               // Optional note from customer
+  note        String?
 
-  reviewedBy  User?    @relation("BargainRequestReview", fields: [reviewedById], references: [id])
+  reviewedBy   User?    @relation("BargainRequestReview", fields: [reviewedById], references: [id])
   reviewedById Int?
-  reviewedAt  DateTime?
+  reviewedAt   DateTime?
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId])
   @@index([productId])
@@ -267,17 +321,17 @@ enum BargainRequestStatus {
 }
 
 model BargainAttempt {
-  id      Int     @id @default(autoincrement())
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId  Int
-  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  id        Int     @id @default(autoincrement())
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
   productId Int
-  order   Order?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
-  orderId Int?
+  order     Order?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  orderId   Int?
 
-  attemptNumber Int
-  offeredPrice  Float
-  accepted      Boolean @default(false)
+  attemptNumber   Int
+  offeredPrice    Float
+  accepted        Boolean @default(false)
 
   acceptedTier    Int?
   finalPrice      Float?
@@ -290,7 +344,7 @@ model BargainAttempt {
   cartAddedAt     DateTime?
   purchasedAt     DateTime?
 
-  createdAt DateTime @default(now())
+  createdAt     DateTime @default(now())
   lastAttemptAt DateTime @default(now())
 
   @@unique([userId, productId, orderId])
@@ -301,17 +355,16 @@ model BargainAttempt {
   @@map("bargain_attempts")
 }
 
-// bulk discount rows for products
 model BulkDiscount {
-  id         Int      @id @default(autoincrement())
-  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  productId  Int
-  minQty     Int
-  discount   Float    // amount or percentage depending on unit
-  unit       DiscountUnit
+  id        Int          @id @default(autoincrement())
+  product   Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId Int
+  minQty    Int
+  discount  Float
+  unit      DiscountUnit
 
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([productId])
   @@map("bulk_discounts")
@@ -370,28 +423,24 @@ model Order {
   id  Int    @id @default(autoincrement())
   uid String @unique @default(uuid())
 
-  // User relationships
-  user       User? @relation("UserOrders", fields: [userId], references: [id])
+  user       User? @relation("UserOrders",   fields: [userId],     references: [id])
   userId     Int?
   placedBy   User? @relation("PlacedByOrders", fields: [placedById], references: [id])
   placedById Int?
-  admin      User? @relation("AdminOrders", fields: [adminId], references: [id])
+  admin      User? @relation("AdminOrders",  fields: [adminId],    references: [id])
   adminId    Int?
 
   type   OrderType   @default(CUSTOMER)
   status OrderStatus @default(PENDING)
 
-  // Payment tracking
   isPaid        Boolean        @default(false)
   paidAt        DateTime?
   paymentMethod PaymentMethod?
 
-  // Refund tracking
   refundIssued Boolean   @default(false)
   refundedAt   DateTime?
   refundAmount Float?
 
-  // Recipient & Delivery Information
   recipientName  String
   recipientPhone String?
   addressLine1   String?
@@ -402,12 +451,10 @@ model Order {
   country        String?
   note           String?
 
-  // Financial Information
   totalAmount Float @default(0)
   totalSp     Float @default(0)
   totalCp     Float @default(0)
 
-  // Relations
   items           OrderItem[]
   payment         Payment?
   bargainAttempts BargainAttempt[]
@@ -434,18 +481,16 @@ model OrderItem {
   product   Product? @relation(fields: [productId], references: [id])
   productId Int?
 
-  // Product snapshot (immutable after creation)
   productName  String
   productPhoto String?
 
   quantity Int
 
-  // Pricing snapshot
-  cp             Float
-  sp             Float
-  subtotalSp     Float
-  subtotalCp     Float
-  priceAtOrder   Float
+  cp           Float
+  sp           Float
+  subtotalSp   Float
+  subtotalCp   Float
+  priceAtOrder Float
   bargainApplied Boolean @default(false)
 
   createdAt DateTime @default(now())
@@ -491,7 +536,6 @@ enum OrderType {
   ADMIN
 }
 
-// NOTE: Removed duplicate CANCELED — only CANCELLED is used throughout the codebase.
 enum OrderStatus {
   PENDING
   PROCESSING
@@ -525,6 +569,26 @@ model Payment {
   @@map("payments")
   @@index([userId])
   @@index([status])
+}
+
+// ── UPI / QR payment settings per admin ──────────────────────────────────────
+// Each admin (shop keeper) sets their UPI ID and optionally uploads a QR code.
+// Customers see this when paying for orders belonging to that admin's products.
+
+model AdminPaymentSettings {
+  id        Int    @id @default(autoincrement())
+  admin     User   @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  adminId   Int    @unique
+
+  upiId     String?   // e.g. priyanshu@upi
+  qrCodeUrl String?   // Supabase Storage public URL for the QR image
+  displayName String? // Friendly name shown to customers, e.g. "Stationery World"
+  isActive  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("admin_payment_settings")
 }
 
 enum PaymentMethod {
