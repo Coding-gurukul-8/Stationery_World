@@ -1,18 +1,37 @@
 const { Prisma } = require('@prisma/client');
 const prisma = require('../../../prisma/client');
+const multer = require('multer');
+const path   = require('path');
+const { uploadToSupabase, deleteFromSupabase, productImagePath, PRODUCT_BUCKET } = require('../../utils/uploadToSupabase');
+
+// ── Multer for direct product image upload ────────────────────────────────────
+const _imgFilter = (req, file, cb) => {
+  const ok = /jpeg|jpg|png|gif|webp/.test(path.extname(file.originalname).toLowerCase())
+           && /image/.test(file.mimetype);
+  ok ? cb(null, true) : cb(new Error('Only image files are allowed.'));
+};
+const _imgUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: _imgFilter
+});
 
 // Valid categories enum
 const VALID_CATEGORIES = ['STATIONERY', 'BOOKS', 'TOYS'];
 
-// Include creator info in product queries
+// Include creator info + variant group in product queries
 const productInclude = {
-  images: true,
+  images: { orderBy: { position: 'asc' } },
   createdBy: {
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      role: true
+    select: { id: true, name: true, email: true, role: true }
+  },
+  variantGroup: {
+    include: {
+      products: {
+        where:   { isActive: true },
+        include: { images: { where: { isPrimary: true }, take: 1 } },
+        orderBy: { id: 'asc' }
+      }
     }
   }
 };
@@ -147,8 +166,17 @@ const getAllProducts = async (req, res) => {
       }
 
       // If there are distinct terms, search keywords array for any match
-      if (terms.length > 0) {
-        orClauses.push({ keywords: { hasSome: terms } });
+      // Lowercase every term so keyword matching is case-insensitive.
+      // Keywords are stored lowercase (enforced in create/update below).
+      const lowerTerms = terms.map(t => t.toLowerCase()).filter(Boolean);
+      if (lowerTerms.length > 0) {
+        orClauses.push({ keywords: { hasSome: lowerTerms } });
+      }
+
+      // Also match the full lowercased query as a single keyword
+      const lowerFullQuery = searchTerm.toLowerCase();
+      if (lowerFullQuery && !lowerTerms.includes(lowerFullQuery)) {
+        orClauses.push({ keywords: { hasSome: [lowerFullQuery] } });
       }
 
       where.AND = [
@@ -459,7 +487,10 @@ const createProduct = async (req, res) => {
 
     // Create product
     // Prepare image and keyword data if provided
-    const keywordArray = Array.isArray(req.body.keywords) ? req.body.keywords.map(k => String(k).trim()).filter(Boolean) : [];
+    // Keywords stored lowercase so search matching is always case-insensitive
+    const keywordArray = Array.isArray(req.body.keywords)
+      ? req.body.keywords.map(k => String(k).trim().toLowerCase()).filter(Boolean)
+      : [];
     const images = Array.isArray(req.body.images) ? req.body.images.filter(Boolean) : [];
     const quantityAdded = parseInt(req.body.quantityAdded || 0) || 0;
 
@@ -610,12 +641,16 @@ const updateProduct = async (req, res) => {
     // Build update data
     const updateData = {};
 
-    if (name !== undefined) {
-      updateData.name = name;
+    if (name        !== undefined) updateData.name        = name;
+    if (description !== undefined) updateData.description = description;
+    if (req.body.keywords !== undefined) {
+      updateData.keywords = Array.isArray(req.body.keywords)
+        ? req.body.keywords.map(k => String(k).trim().toLowerCase()).filter(Boolean)
+        : [];
     }
-
-    if (description !== undefined) {
-      updateData.description = description;
+    if (req.body.variantGroupId !== undefined) {
+      updateData.variantGroupId = req.body.variantGroupId
+        ? parseInt(req.body.variantGroupId) : null;
     }
 
     if (category !== undefined) {
@@ -1148,8 +1183,13 @@ const getCustomerProducts = async (req, res) => {
       if (VALID_CATEGORIES.includes(s.toUpperCase())) {
         orClauses.push({ category: s.toUpperCase() });
       }
-      if (terms.length > 0) {
-        orClauses.push({ keywords: { hasSome: terms } });
+      const lcTerms = terms.map(t => t.toLowerCase()).filter(Boolean);
+      if (lcTerms.length > 0) {
+        orClauses.push({ keywords: { hasSome: lcTerms } });
+      }
+      const lcFull = s.toLowerCase();
+      if (lcFull && !lcTerms.includes(lcFull)) {
+        orClauses.push({ keywords: { hasSome: [lcFull] } });
       }
       where.AND = [{ OR: orClauses }];
     }
@@ -1297,8 +1337,13 @@ const customerSearch = async (req, res) => {
       orClauses.push({ category: upperSearch });
     }
 
-    if (terms.length > 0) {
-      orClauses.push({ keywords: { hasSome: terms } });
+    const lowerTerms = terms.map(t => t.toLowerCase()).filter(Boolean);
+    if (lowerTerms.length > 0) {
+      orClauses.push({ keywords: { hasSome: lowerTerms } });
+    }
+    const lowerFullQuery = rawSearch.toLowerCase();
+    if (lowerFullQuery && !lowerTerms.includes(lowerFullQuery)) {
+      orClauses.push({ keywords: { hasSome: [lowerFullQuery] } });
     }
 
     // Subcategory filter from query param
@@ -1491,6 +1536,215 @@ const trackInteraction = async (req, res) => {
 };
 
 
+// =============================================================================
+// MANAGE PRODUCT IMAGES
+// PUT /api/products/:id/images  (multipart/form-data, admin only)
+//
+// mode=append  → upload files and add after existing images
+// mode=replace → replace image at 'position' (0-based); deletes old from Supabase
+//
+// Fields: images (files, up to 6), mode ('append'|'replace'), position (int, replace only)
+// =============================================================================
+const manageProductImages = [
+  _imgUpload.array('images', 6),
+  async (req, res) => {
+    try {
+      const productId = parseInt(req.params.id);
+      if (isNaN(productId)) return res.status(400).json({ success: false, message: 'Invalid product ID.' });
+
+      const product = await prisma.product.findUnique({
+        where: { id: productId },
+        include: { images: { orderBy: { position: 'asc' } } }
+      });
+      if (!product) return res.status(404).json({ success: false, message: 'Product not found.' });
+
+      const mode  = (req.body.mode || 'append').toLowerCase();
+      const files = req.files || [];
+      if (files.length === 0) return res.status(400).json({ success: false, message: 'No image files uploaded.' });
+
+      if (mode === 'replace') {
+        if (files.length !== 1)
+          return res.status(400).json({ success: false, message: 'Replace mode accepts exactly 1 image.' });
+        const position = parseInt(req.body.position);
+        if (isNaN(position) || position < 0)
+          return res.status(400).json({ success: false, message: 'position (0-based) is required for replace mode.' });
+
+        const existing = product.images.find(img => img.position === position);
+        if (existing?.url) await deleteFromSupabase(existing.url, PRODUCT_BUCKET).catch(() => {});
+
+        const storagePath = productImagePath(productId, position);
+        const newUrl = await uploadToSupabase(files[0].buffer, files[0].mimetype, storagePath, PRODUCT_BUCKET);
+
+        if (existing) {
+          await prisma.productImage.update({ where: { id: existing.id }, data: { url: newUrl } });
+        } else {
+          await prisma.productImage.create({
+            data: { productId, url: newUrl, position, isPrimary: position === 0 }
+          });
+        }
+      } else {
+        // append
+        const maxPos = product.images.length > 0
+          ? Math.max(...product.images.map(i => i.position)) + 1
+          : 0;
+        await Promise.all(files.map(async (file, idx) => {
+          const pos         = maxPos + idx;
+          const storagePath = productImagePath(productId, pos);
+          const url         = await uploadToSupabase(file.buffer, file.mimetype, storagePath, PRODUCT_BUCKET);
+          await prisma.productImage.create({ data: { productId, url, position: pos, isPrimary: pos === 0 } });
+        }));
+      }
+
+      // Re-sync isPrimary: position 0 is always primary
+      const allImgs = await prisma.productImage.findMany({ where: { productId }, orderBy: { position: 'asc' } });
+      await Promise.all(allImgs.map(img =>
+        prisma.productImage.update({ where: { id: img.id }, data: { isPrimary: img.position === 0 } })
+      ));
+
+      const refreshed = await prisma.product.findUnique({ where: { id: productId }, include: productInclude });
+      return res.status(200).json({
+        success: true,
+        message: mode === 'replace' ? 'Image replaced successfully.' : 'Images appended successfully.',
+        data: refreshed
+      });
+    } catch (error) {
+      console.error('Manage product images error:', error);
+      return res.status(500).json({ success: false, message: 'Internal server error while managing images.' });
+    }
+  }
+];
+
+// DELETE /api/products/:id/images/:imageId  (admin only)
+const deleteProductImage = async (req, res) => {
+  try {
+    const productId = parseInt(req.params.id);
+    const imageId   = parseInt(req.params.imageId);
+    if (isNaN(productId) || isNaN(imageId))
+      return res.status(400).json({ success: false, message: 'Invalid product or image ID.' });
+
+    const image = await prisma.productImage.findFirst({ where: { id: imageId, productId } });
+    if (!image) return res.status(404).json({ success: false, message: 'Image not found.' });
+
+    if (image.url) await deleteFromSupabase(image.url, PRODUCT_BUCKET).catch(() => {});
+    await prisma.productImage.delete({ where: { id: imageId } });
+
+    // Re-normalise positions
+    const remaining = await prisma.productImage.findMany({ where: { productId }, orderBy: { position: 'asc' } });
+    await Promise.all(remaining.map((img, idx) =>
+      prisma.productImage.update({ where: { id: img.id }, data: { position: idx, isPrimary: idx === 0 } })
+    ));
+
+    return res.status(200).json({ success: true, message: 'Image deleted successfully.' });
+  } catch (error) {
+    console.error('Delete product image error:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error while deleting image.' });
+  }
+};
+
+// =============================================================================
+// PRODUCT VARIANT GROUPS
+// =============================================================================
+const VALID_VARIANT_TYPES = ['COLOR', 'SIZE', 'TYPE', 'STYLE'];
+
+const createVariantGroup = async (req, res) => {
+  try {
+    const { name, variantType, description } = req.body;
+    if (!name || !variantType)
+      return res.status(400).json({ success: false, message: 'name and variantType are required.' });
+    if (!VALID_VARIANT_TYPES.includes(variantType.toUpperCase()))
+      return res.status(400).json({ success: false, message: `variantType must be one of: ${VALID_VARIANT_TYPES.join(', ')}` });
+
+    const group = await prisma.productVariantGroup.create({
+      data: { name, variantType: variantType.toUpperCase(), description: description || null },
+      include: { products: { include: { images: { where: { isPrimary: true }, take: 1 } } } }
+    });
+    return res.status(201).json({ success: true, message: 'Variant group created.', data: group });
+  } catch (error) {
+    console.error('Create variant group error:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+};
+
+const getVariantGroups = async (req, res) => {
+  try {
+    const groups = await prisma.productVariantGroup.findMany({
+      include: {
+        products: {
+          where:   { isActive: true },
+          include: { images: { where: { isPrimary: true }, take: 1 } },
+          orderBy: { id: 'asc' }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    return res.status(200).json({ success: true, data: groups });
+  } catch (error) {
+    console.error('Get variant groups error:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+};
+
+const getVariantGroupById = async (req, res) => {
+  try {
+    const id = parseInt(req.params.groupId);
+    if (isNaN(id)) return res.status(400).json({ success: false, message: 'Invalid group ID.' });
+
+    const group = await prisma.productVariantGroup.findUnique({
+      where: { id },
+      include: { products: { include: productInclude, orderBy: { id: 'asc' } } }
+    });
+    if (!group) return res.status(404).json({ success: false, message: 'Variant group not found.' });
+    return res.status(200).json({ success: true, data: group });
+  } catch (error) {
+    console.error('Get variant group error:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+};
+
+const addProductToVariantGroup = async (req, res) => {
+  try {
+    const groupId   = parseInt(req.params.groupId);
+    const productId = parseInt(req.params.productId);
+    if (isNaN(groupId) || isNaN(productId))
+      return res.status(400).json({ success: false, message: 'Invalid IDs.' });
+
+    const [group, product] = await Promise.all([
+      prisma.productVariantGroup.findUnique({ where: { id: groupId } }),
+      prisma.product.findUnique({ where: { id: productId } })
+    ]);
+    if (!group)   return res.status(404).json({ success: false, message: 'Variant group not found.' });
+    if (!product) return res.status(404).json({ success: false, message: 'Product not found.' });
+
+    const updated = await prisma.product.update({
+      where: { id: productId },
+      data:  { variantGroupId: groupId },
+      include: productInclude
+    });
+    return res.status(200).json({ success: true, message: 'Product added to variant group.', data: updated });
+  } catch (error) {
+    console.error('Add to variant group error:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+};
+
+const removeProductFromVariantGroup = async (req, res) => {
+  try {
+    const productId = parseInt(req.params.productId);
+    if (isNaN(productId)) return res.status(400).json({ success: false, message: 'Invalid product ID.' });
+
+    const updated = await prisma.product.update({
+      where: { id: productId },
+      data:  { variantGroupId: null },
+      include: productInclude
+    });
+    return res.status(200).json({ success: true, message: 'Product removed from variant group.', data: updated });
+  } catch (error) {
+    console.error('Remove from variant group error:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+};
+
+
 module.exports = {
   getAllProducts,
   getProductById,
@@ -1506,5 +1760,12 @@ module.exports = {
   getLowStockProducts,
   restockProduct,
   getInventoryLogs,
-  notifyMeWhenAvailable
+  notifyMeWhenAvailable,
+  manageProductImages,
+  deleteProductImage,
+  createVariantGroup,
+  getVariantGroups,
+  getVariantGroupById,
+  addProductToVariantGroup,
+  removeProductFromVariantGroup,
 };
