@@ -1,19 +1,27 @@
 const express = require('express');
-const router = express.Router();
+const router  = express.Router();
 const {
   initiatePayment,
   verifyPayment,
   getPaymentStatus,
-  processRefund
+  processRefund,
+  setUpiSettings,
+  getUpiSettings,
+  getOrderUpiSettings,
 } = require('./payment.controller');
 const { authMiddleware, adminMiddleware } = require('../user/user.middleware');
 
-// Customer routes
-router.post('/initiate', authMiddleware, initiatePayment);
-router.post('/verify', authMiddleware, verifyPayment);
-router.get('/:orderId', authMiddleware, getPaymentStatus);
+// ── UPI / QR settings ────────────────────────────────────────────────────────
+router.put('/admin/upi-settings',          authMiddleware, adminMiddleware, setUpiSettings);
+router.get('/upi-settings/:adminId',       getUpiSettings);                               // public
+router.get('/order/:orderId/upi-settings', authMiddleware, getOrderUpiSettings);
 
-// Admin routes
+// ── Standard payment flow ─────────────────────────────────────────────────────
+router.post('/initiate', authMiddleware, initiatePayment);
+router.post('/verify',   authMiddleware, verifyPayment);
+router.get('/:orderId',  authMiddleware, getPaymentStatus);
+
+// ── Admin ─────────────────────────────────────────────────────────────────────
 router.post('/:id/refund', authMiddleware, adminMiddleware, processRefund);
 
 module.exports = router;
