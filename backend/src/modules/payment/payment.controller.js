@@ -1,70 +1,143 @@
-const prisma = require('../../../prisma/client');
+const prisma  = require('../../../prisma/client');
+const multer  = require('multer');
+const path    = require('path');
+const { uploadToSupabase, deleteFromSupabase, USER_BUCKET } = require('../../utils/uploadToSupabase');
 
-// Initiate payment for an order
+// ── Multer for QR code upload (stored in users bucket under adminId/qr-code.jpg) ──
+const _qrFilter = (req, file, cb) => {
+  const ok = /jpeg|jpg|png|webp/.test(path.extname(file.originalname).toLowerCase())
+           && /image/.test(file.mimetype);
+  ok ? cb(null, true) : cb(new Error('Only image files are allowed for QR code.'));
+};
+const _qrUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: _qrFilter
+}).single('qrCode');
+
+// =============================================================================
+// UPI / QR PAYMENT SETTINGS
+// =============================================================================
+
+// PUT /api/payments/admin/upi-settings  (admin only, multipart or JSON)
+// Body: upiId, displayName, qrCode (file)
+const setUpiSettings = (req, res) => {
+  _qrUpload(req, res, async (err) => {
+    if (err) return res.status(400).json({ success: false, message: err.message });
+
+    try {
+      const adminId = req.user.id;
+      const { upiId, displayName } = req.body;
+
+      if (!upiId && !displayName && !req.file)
+        return res.status(400).json({ success: false, message: 'Provide at least upiId, displayName, or a qrCode image.' });
+
+      const existing   = await prisma.adminPaymentSettings.findUnique({ where: { adminId } });
+      const updateData = {};
+
+      if (upiId       !== undefined) updateData.upiId       = String(upiId).trim();
+      if (displayName !== undefined) updateData.displayName = String(displayName).trim();
+
+      if (req.file) {
+        // Delete old QR from Supabase first (best-effort)
+        if (existing?.qrCodeUrl) await deleteFromSupabase(existing.qrCodeUrl, USER_BUCKET).catch(() => {});
+        const storagePath = `${adminId}/qr-code.jpg`;
+        updateData.qrCodeUrl = await uploadToSupabase(req.file.buffer, req.file.mimetype, storagePath, USER_BUCKET);
+      }
+
+      const settings = await prisma.adminPaymentSettings.upsert({
+        where:  { adminId },
+        create: { adminId, ...updateData },
+        update: updateData
+      });
+
+      return res.status(200).json({ success: true, message: 'UPI payment settings updated.', data: settings });
+    } catch (error) {
+      console.error('Set UPI settings error:', error);
+      return res.status(500).json({ success: false, message: 'Internal server error while updating UPI settings.' });
+    }
+  });
+};
+
+// GET /api/payments/upi-settings/:adminId  (public — customer needs to know where to pay)
+const getUpiSettings = async (req, res) => {
+  try {
+    const adminId = parseInt(req.params.adminId);
+    if (isNaN(adminId)) return res.status(400).json({ success: false, message: 'Invalid admin ID.' });
+
+    const settings = await prisma.adminPaymentSettings.findUnique({
+      where:  { adminId },
+      select: { upiId: true, qrCodeUrl: true, displayName: true, isActive: true }
+    });
+
+    if (!settings || !settings.isActive)
+      return res.status(404).json({ success: false, message: 'UPI settings not configured for this admin.' });
+
+    return res.status(200).json({ success: true, data: settings });
+  } catch (error) {
+    console.error('Get UPI settings error:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+};
+
+// GET /api/payments/order/:orderId/upi-settings  (auth required)
+// Returns UPI details for every admin whose products are in this order.
+// A single order may contain products from multiple admins (mixed cart).
+const getOrderUpiSettings = async (req, res) => {
+  try {
+    const orderId = parseInt(req.params.orderId);
+    if (isNaN(orderId)) return res.status(400).json({ success: false, message: 'Invalid order ID.' });
+
+    const order = await prisma.order.findUnique({
+      where:   { id: orderId },
+      include: { items: { include: { product: { select: { createdById: true } } } } }
+    });
+    if (!order) return res.status(404).json({ success: false, message: 'Order not found.' });
+
+    if (order.userId !== req.user.id && req.user.role !== 'ADMIN')
+      return res.status(403).json({ success: false, message: 'Access denied.' });
+
+    const adminIds = [...new Set(
+      order.items.map(i => i.product?.createdById).filter(Boolean)
+    )];
+
+    const settingsList = await prisma.adminPaymentSettings.findMany({
+      where:  { adminId: { in: adminIds }, isActive: true },
+      select: { adminId: true, upiId: true, qrCodeUrl: true, displayName: true }
+    });
+
+    return res.status(200).json({ success: true, data: settingsList });
+  } catch (error) {
+    console.error('Get order UPI settings error:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+};
+
+// =============================================================================
+// EXISTING PAYMENT FLOWS (fixed bugs: CANCELED→CANCELLED, tx.inventory→tx.product)
+// =============================================================================
+
 const initiatePayment = async (req, res) => {
   try {
     const userId = req.user.id;
     const { orderId, method = 'CASH', transactionId } = req.body;
 
-    console.log('Initiate payment request:', { userId, orderId, method });
-
-    if (!orderId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Order ID is required.'
-      });
-    }
+    if (!orderId) return res.status(400).json({ success: false, message: 'Order ID is required.' });
 
     const validMethods = ['CREDIT_CARD', 'DEBIT_CARD', 'UPI', 'CASH', 'NET_BANKING', 'OTHER'];
-    if (!validMethods.includes(method)) {
-      return res.status(400).json({
-        success: false,
-        message: `Invalid payment method. Must be one of: ${validMethods.join(', ')}`
-      });
-    }
+    if (!validMethods.includes(method))
+      return res.status(400).json({ success: false, message: `Invalid payment method. Must be one of: ${validMethods.join(', ')}` });
 
-    // Get order
-    const order = await prisma.order.findUnique({
-      where: { id: parseInt(orderId) }
-    });
+    const order = await prisma.order.findUnique({ where: { id: parseInt(orderId) } });
+    if (!order) return res.status(404).json({ success: false, message: 'Order not found.' });
+    if (order.userId !== userId) return res.status(403).json({ success: false, message: 'Access denied.' });
+    if (order.status !== 'CONFIRMED')
+      return res.status(400).json({ success: false, message: `Order must be CONFIRMED before payment. Current status: ${order.status}` });
 
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found.'
-      });
-    }
+    const existingPayment = await prisma.payment.findUnique({ where: { orderId: parseInt(orderId) } });
+    if (existingPayment)
+      return res.status(409).json({ success: false, message: 'Payment already exists for this order.', data: existingPayment });
 
-    // Verify ownership
-    if (order.userId !== userId) {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied.'
-      });
-    }
-
-    // Check if order is in correct status
-    if (order.status !== 'CONFIRMED') {
-      return res.status(400).json({
-        success: false,
-        message: `Order must be CONFIRMED before payment. Current status: ${order.status}`
-      });
-    }
-
-    // Check if payment already exists
-    const existingPayment = await prisma.payment.findUnique({
-      where: { orderId: parseInt(orderId) }
-    });
-
-    if (existingPayment) {
-      return res.status(409).json({
-        success: false,
-        message: 'Payment already exists for this order.',
-        data: existingPayment
-      });
-    }
-
-    // Create payment
     const payment = await prisma.payment.create({
       data: {
         orderId: parseInt(orderId),
@@ -76,291 +149,131 @@ const initiatePayment = async (req, res) => {
       }
     });
 
-    console.log('Payment initiated:', payment.id);
-
-    return res.status(201).json({
-      success: true,
-      message: 'Payment initiated successfully.',
-      data: payment
-    });
+    return res.status(201).json({ success: true, message: 'Payment initiated successfully.', data: payment });
   } catch (error) {
     console.error('Initiate payment error:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error while initiating payment.'
-    });
+    return res.status(500).json({ success: false, message: 'Internal server error while initiating payment.' });
   }
 };
 
-// Verify/complete payment
 const verifyPayment = async (req, res) => {
   try {
     const userId = req.user.id;
     const { paymentId, status = 'SUCCESS', transactionId } = req.body;
 
-    console.log('Verify payment request:', { userId, paymentId, status });
-
-    if (!paymentId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Payment ID is required.'
-      });
-    }
+    if (!paymentId) return res.status(400).json({ success: false, message: 'Payment ID is required.' });
 
     const validStatuses = ['SUCCESS', 'FAILED'];
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
-      });
-    }
+    if (!validStatuses.includes(status))
+      return res.status(400).json({ success: false, message: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
 
-    // Get payment
     const payment = await prisma.payment.findUnique({
-      where: { id: parseInt(paymentId) },
-      include: {
-        order: {
-          include: {
-            items: {
-              include: {
-                product: true
-              }
-            }
-          }
-        }
-      }
+      where:   { id: parseInt(paymentId) },
+      include: { order: { include: { items: { include: { product: true } } } } }
     });
+    if (!payment) return res.status(404).json({ success: false, message: 'Payment not found.' });
+    if (payment.userId !== userId) return res.status(403).json({ success: false, message: 'Access denied.' });
+    if (payment.status !== 'PENDING')
+      return res.status(400).json({ success: false, message: `Payment already processed. Current status: ${payment.status}` });
 
-    if (!payment) {
-      return res.status(404).json({
-        success: false,
-        message: 'Payment not found.'
-      });
-    }
-
-    // Verify ownership
-    if (payment.userId !== userId) {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied.'
-      });
-    }
-
-    if (payment.status !== 'PENDING') {
-      return res.status(400).json({
-        success: false,
-        message: `Payment already processed. Current status: ${payment.status}`
-      });
-    }
-
-    // Update payment and order in transaction
     const updatedPayment = await prisma.$transaction(async (tx) => {
-      // Update payment status
       const updated = await tx.payment.update({
         where: { id: parseInt(paymentId) },
-        data: {
-          status,
-          transactionId: transactionId || payment.transactionId
-        }
+        data:  { status, transactionId: transactionId || payment.transactionId }
       });
 
-      // Update order status based on payment status
       if (status === 'SUCCESS') {
         await tx.order.update({
           where: { id: payment.orderId },
-          data: { status: 'PAID' }
+          data:  { status: 'PAID', isPaid: true, paidAt: new Date(), paymentMethod: payment.method }
         });
-
-        // Create notification
         await tx.notification.create({
-          data: {
-            userId: payment.userId,
-            type: 'PAYMENT_STATUS',
-            message: `Payment successful for order #${payment.orderId}`,
-            isRead: false
-          }
+          data: { userId: payment.userId, type: 'PAYMENT_STATUS', message: `Payment successful for order #${payment.orderId}`, isRead: false }
         });
-      } else if (status === 'FAILED') {
-        // Payment failed - cancel order and restore inventory
-        await tx.order.update({
-          where: { id: payment.orderId },
-          data: { status: 'CANCELED' }
-        });
-
-        // Restore inventory
+      } else {
+        // FAILED — cancel order and restore stock
+        await tx.order.update({ where: { id: payment.orderId }, data: { status: 'CANCELLED' } });
         for (const item of payment.order.items) {
-          await tx.inventory.update({
-            where: { productId: item.productId },
-            data: {
-              quantity: {
-                increment: item.quantity
-              }
-            }
-          });
-        }
-
-        // Create notification
-        await tx.notification.create({
-          data: {
-            userId: payment.userId,
-            type: 'PAYMENT_STATUS',
-            message: `Payment failed for order #${payment.orderId}. Order canceled and inventory restored.`,
-            isRead: false
+          if (item.productId) {
+            await tx.product.update({
+              where: { id: item.productId },
+              data:  { totalStock: { increment: item.quantity } }
+            });
           }
+        }
+        await tx.notification.create({
+          data: { userId: payment.userId, type: 'PAYMENT_STATUS', message: `Payment failed for order #${payment.orderId}. Order cancelled.`, isRead: false }
         });
       }
 
       return updated;
     });
 
-    console.log('Payment verified:', updatedPayment.id);
-
     return res.status(200).json({
       success: true,
-      message: status === 'SUCCESS' ? 'Payment successful.' : 'Payment failed. Order canceled.',
+      message: status === 'SUCCESS' ? 'Payment successful.' : 'Payment failed. Order cancelled.',
       data: updatedPayment
     });
   } catch (error) {
     console.error('Verify payment error:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error while verifying payment.'
-    });
+    return res.status(500).json({ success: false, message: 'Internal server error while verifying payment.' });
   }
 };
 
-// Get payment status for an order
 const getPaymentStatus = async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId  = req.user.id;
     const isAdmin = req.user.role === 'ADMIN';
-    const { orderId } = req.params;
+    const orderId = parseInt(req.params.orderId);
 
+    const payment = await prisma.payment.findUnique({ where: { orderId }, include: { order: true } });
+    if (!payment) return res.status(404).json({ success: false, message: 'Payment not found for this order.' });
+    if (!isAdmin && payment.userId !== userId) return res.status(403).json({ success: false, message: 'Access denied.' });
 
-    const payment = await prisma.payment.findUnique({
-      where: { orderId: parseInt(orderId) },
-      include: {
-        order: true
-      }
-    });
-
-    if (!payment) {
-      return res.status(404).json({
-        success: false,
-        message: 'Payment not found for this order.'
-      });
-    }
-
-    // Check ownership (unless admin)
-    if (!isAdmin && payment.userId !== userId) {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied.'
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-      message: 'Payment status retrieved successfully.',
-      data: payment
-    });
+    return res.status(200).json({ success: true, message: 'Payment status retrieved successfully.', data: payment });
   } catch (error) {
     console.error('Get payment status error:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error while fetching payment status.'
-    });
+    return res.status(500).json({ success: false, message: 'Internal server error while fetching payment status.' });
   }
 };
 
-// Process refund (Admin only)
 const processRefund = async (req, res) => {
   try {
-    const { id } = req.params;
-
-    console.log('Process refund request:', id);
-
     const payment = await prisma.payment.findUnique({
-      where: { id: parseInt(id) },
-      include: {
-        order: {
-          include: {
-            items: {
-              include: {
-                product: true
-              }
-            }
-          }
-        }
-      }
+      where:   { id: parseInt(req.params.id) },
+      include: { order: { include: { items: { include: { product: true } } } } }
     });
+    if (!payment) return res.status(404).json({ success: false, message: 'Payment not found.' });
+    if (payment.status !== 'SUCCESS')
+      return res.status(400).json({ success: false, message: `Cannot refund payment with status: ${payment.status}` });
 
-    if (!payment) {
-      return res.status(404).json({
-        success: false,
-        message: 'Payment not found.'
-      });
-    }
-
-    if (payment.status !== 'SUCCESS') {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot refund payment with status: ${payment.status}`
-      });
-    }
-
-    // Update payment and order in transaction
     const updatedPayment = await prisma.$transaction(async (tx) => {
-      // Update payment status to REFUNDED
       const updated = await tx.payment.update({
-        where: { id: parseInt(id) },
-        data: { status: 'REFUNDED' }
+        where: { id: parseInt(req.params.id) },
+        data:  { status: 'REFUNDED' }
       });
-
-      // Update order status to RETURNED
       await tx.order.update({
         where: { id: payment.orderId },
-        data: { status: 'RETURNED' }
+        data:  { status: 'RETURNED', refundIssued: true, refundedAt: new Date(), refundAmount: payment.amount }
       });
-
-      // Restore inventory
       for (const item of payment.order.items) {
-        await tx.inventory.update({
-          where: { productId: item.productId },
-          data: {
-            quantity: {
-              increment: item.quantity
-            }
-          }
-        });
-      }
-
-      // Create notification
-      await tx.notification.create({
-        data: {
-          userId: payment.userId,
-          type: 'PAYMENT_STATUS',
-          message: `Refund processed for order #${payment.orderId}`,
-          isRead: false
+        if (item.productId) {
+          await tx.product.update({
+            where: { id: item.productId },
+            data:  { totalStock: { increment: item.quantity } }
+          });
         }
+      }
+      await tx.notification.create({
+        data: { userId: payment.userId, type: 'PAYMENT_STATUS', message: `Refund processed for order #${payment.orderId}`, isRead: false }
       });
-
       return updated;
     });
 
-    console.log('Refund processed:', updatedPayment.id);
-
-    return res.status(200).json({
-      success: true,
-      message: 'Refund processed successfully.',
-      data: updatedPayment
-    });
+    return res.status(200).json({ success: true, message: 'Refund processed successfully.', data: updatedPayment });
   } catch (error) {
     console.error('Process refund error:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error while processing refund.'
-    });
+    return res.status(500).json({ success: false, message: 'Internal server error while processing refund.' });
   }
 };
 
@@ -368,5 +281,8 @@ module.exports = {
   initiatePayment,
   verifyPayment,
   getPaymentStatus,
-  processRefund
+  processRefund,
+  setUpiSettings,
+  getUpiSettings,
+  getOrderUpiSettings,
 };
