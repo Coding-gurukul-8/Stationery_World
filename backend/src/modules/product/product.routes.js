@@ -18,7 +18,14 @@ const {
   getLowStockProducts,
   restockProduct,
   getInventoryLogs,
-  notifyMeWhenAvailable
+  notifyMeWhenAvailable,
+  manageProductImages,
+  deleteProductImage,
+  createVariantGroup,
+  getVariantGroups,
+  getVariantGroupById,
+  addProductToVariantGroup,
+  removeProductFromVariantGroup,
 } = require('./product.controller');
 const { authMiddleware, adminMiddleware, optionalAuth } = require('../user/user.middleware');
 const { uploadToSupabase, PRODUCT_BUCKET } = require('../../utils/uploadToSupabase');
@@ -95,5 +102,20 @@ router.put('/:id', authMiddleware, adminMiddleware, updateProduct);
 router.delete('/:id', authMiddleware, adminMiddleware, deleteProduct);
 router.patch('/:id/toggle-status', authMiddleware, adminMiddleware, toggleProductStatus);
 router.post('/:id/restock', authMiddleware, adminMiddleware, restockProduct);
+
+// ── Variant group routes (admin) ─────────────────────────────────────────────
+router.get( '/variants/groups',                                  authMiddleware, adminMiddleware, getVariantGroups);
+router.post('/variants/groups',                                  authMiddleware, adminMiddleware, createVariantGroup);
+router.get( '/variants/groups/:groupId',                         authMiddleware, adminMiddleware, getVariantGroupById);
+router.post('/variants/groups/:groupId/products/:productId',     authMiddleware, adminMiddleware, addProductToVariantGroup);
+router.delete('/variants/products/:productId/group',             authMiddleware, adminMiddleware, removeProductFromVariantGroup);
+
+// ── Product image management (admin) ─────────────────────────────────────────
+// PUT  /api/products/:id/images        — append or replace (multipart, field: images)
+//   Body: mode=append|replace, position=<int> (for replace only)
+// DELETE /api/products/:id/images/:imageId — remove one image
+router.put(   '/:id/images',          authMiddleware, adminMiddleware, manageProductImages);
+router.delete('/:id/images/:imageId', authMiddleware, adminMiddleware, deleteProductImage);
+
 
 module.exports = router;
