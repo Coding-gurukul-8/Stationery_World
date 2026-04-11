@@ -1,3 +1,5 @@
+// product.routes.js  —  Stationery World v4.0
+
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
@@ -7,9 +9,11 @@ const {
   getAllProducts,
   getProductById,
   getProductsByCategory,
+  getSubCategories,
   getRecommendedProducts,
   getCustomerProducts,
   customerSearch,
+  recordSearchClick,
   trackInteraction,
   createProduct,
   updateProduct,
@@ -50,7 +54,7 @@ const uploadRateLimiter = rateLimit({
   message: { success: false, message: 'Too many upload requests. Please wait a moment and try again.' }
 });
 
-// Image upload
+// ── Image upload ──────────────────────────────────────────────────────────────
 router.post('/upload-images', uploadRateLimiter, authMiddleware, adminMiddleware, upload.array('images', 6), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
@@ -58,13 +62,9 @@ router.post('/upload-images', uploadRateLimiter, authMiddleware, adminMiddleware
     }
     const productId = req.query.productId || null;
     const uploadPromises = req.files.map((file, idx) => {
-      let storagePath;
-      if (productId) {
-        storagePath = `${productId}/image-${idx}.webp`;
-      } else {
-        const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-        storagePath = `tmp/${unique}.webp`;
-      }
+      const storagePath = productId
+        ? `${productId}/image-${idx}.webp`
+        : `tmp/${Date.now()}-${Math.round(Math.random() * 1e9)}.webp`;
       return uploadToSupabase(file.buffer, file.mimetype, storagePath, PRODUCT_BUCKET);
     });
     const urls = await Promise.all(uploadPromises);
@@ -75,47 +75,48 @@ router.post('/upload-images', uploadRateLimiter, authMiddleware, adminMiddleware
   }
 });
 
-// Admin-specific static routes (before dynamic /:id)
+// ── Static admin routes (must be before /:id) ────────────────────────────────
 router.get('/admin/low-stock', authMiddleware, adminMiddleware, getLowStockProducts);
 
-// ─── Customer-facing endpoints (optionalAuth so both guests & logged-in work) ──
-// IMPORTANT: these must come before the generic /:id dynamic route
+// ── 🆕 SubCategories (Section 2.4 — Shop By Category) ───────────────────────
+router.get('/subcategories', optionalAuth, getSubCategories);
+
+// ── Customer catalog ─────────────────────────────────────────────────────────
 router.get('/customer', optionalAuth, getCustomerProducts);
 router.get('/customer/search', optionalAuth, customerSearch);
 
-// Interaction tracking (authenticated)
+// ── 🆕 Search click (self-learning) — Section 2.3 ───────────────────────────
+router.post('/search/click', optionalAuth, recordSearchClick);
+
+// ── Recommended products ──────────────────────────────────────────────────────
+router.get('/recommended', authMiddleware, getRecommendedProducts);
+
+// ── Variant groups ────────────────────────────────────────────────────────────
+router.post('/variant-groups', authMiddleware, adminMiddleware, createVariantGroup);
+router.get('/variant-groups', getVariantGroups);
+router.get('/variant-groups/:groupId', getVariantGroupById);
+router.post('/variant-groups/:groupId/products/:productId', authMiddleware, adminMiddleware, addProductToVariantGroup);
+router.delete('/variant-groups/products/:productId', authMiddleware, adminMiddleware, removeProductFromVariantGroup);
+
+// ── Track interaction ─────────────────────────────────────────────────────────
 router.post('/track-interaction', authMiddleware, trackInteraction);
 
-// Public general routes
-router.get('/', getAllProducts);
-router.get('/recommended', authMiddleware, getRecommendedProducts);
+// ── General product routes ────────────────────────────────────────────────────
+router.get('/', optionalAuth, getAllProducts);
 router.get('/category/:category', getProductsByCategory);
 
-// Admin mutation routes
-router.post('/', authMiddleware, adminMiddleware, createProduct);
-
-// Dynamic routes (MUST be last to avoid shadowing named routes above)
+// ── Product-specific routes (must be after all static routes) ────────────────
 router.get('/:id', getProductById);
-router.get('/:id/logs', authMiddleware, adminMiddleware, getInventoryLogs);
-router.post('/:id/notify', authMiddleware, notifyMeWhenAvailable);
+router.post('/', authMiddleware, adminMiddleware, createProduct);
 router.put('/:id', authMiddleware, adminMiddleware, updateProduct);
 router.delete('/:id', authMiddleware, adminMiddleware, deleteProduct);
 router.patch('/:id/toggle-status', authMiddleware, adminMiddleware, toggleProductStatus);
 router.post('/:id/restock', authMiddleware, adminMiddleware, restockProduct);
+router.get('/:id/inventory-logs', authMiddleware, adminMiddleware, getInventoryLogs);
+router.post('/:id/notify-me', authMiddleware, notifyMeWhenAvailable);
 
-// ── Variant group routes (admin) ─────────────────────────────────────────────
-router.get( '/variants/groups',                                  authMiddleware, adminMiddleware, getVariantGroups);
-router.post('/variants/groups',                                  authMiddleware, adminMiddleware, createVariantGroup);
-router.get( '/variants/groups/:groupId',                         authMiddleware, adminMiddleware, getVariantGroupById);
-router.post('/variants/groups/:groupId/products/:productId',     authMiddleware, adminMiddleware, addProductToVariantGroup);
-router.delete('/variants/products/:productId/group',             authMiddleware, adminMiddleware, removeProductFromVariantGroup);
-
-// ── Product image management (admin) ─────────────────────────────────────────
-// PUT  /api/products/:id/images        — append or replace (multipart, field: images)
-//   Body: mode=append|replace, position=<int> (for replace only)
-// DELETE /api/products/:id/images/:imageId — remove one image
-router.put(   '/:id/images',          authMiddleware, adminMiddleware, manageProductImages);
+// ── Product image management ──────────────────────────────────────────────────
+router.put('/:id/images', authMiddleware, adminMiddleware, ...manageProductImages);
 router.delete('/:id/images/:imageId', authMiddleware, adminMiddleware, deleteProductImage);
-
 
 module.exports = router;
