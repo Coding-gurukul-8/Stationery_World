@@ -1,6 +1,36 @@
+// cart.controller.js  —  Stationery World v4.0
+//
+// Upgrades:
+//  - 🔧 Cart validates stock before adding/updating (Section 10.3)
+//  - 🔧 validateCartStock: new helper called before checkout to confirm all items still in stock
+//  - 🔧 Bulk discount auto-applied when minQty threshold is met (Section 10.3)
+//  - All existing functions PRESERVED
+
 const prisma = require('../../../prisma/client');
 
-// Get user's cart
+// ── Helper: apply bulk discount for a product at given quantity ───────────────
+const applyBulkDiscount = (basePrice, quantity, bulkDiscounts = []) => {
+  if (!bulkDiscounts || bulkDiscounts.length === 0) return basePrice;
+
+  // Find the best discount tier where minQty <= quantity
+  const eligibleDiscounts = bulkDiscounts
+    .filter(d => quantity >= d.minQty)
+    .sort((a, b) => b.minQty - a.minQty); // highest threshold first
+
+  if (eligibleDiscounts.length === 0) return basePrice;
+
+  const best = eligibleDiscounts[0];
+  if (best.unit === 'PERCENT') {
+    return Math.max(0, basePrice * (1 - best.discount / 100));
+  } else {
+    // RUPEES
+    return Math.max(0, basePrice - best.discount);
+  }
+};
+
+// =============================================================================
+// GET CART
+// =============================================================================
 const getCart = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -10,170 +40,120 @@ const getCart = async (req, res) => {
       include: {
         product: {
           include: {
-            images: {
-              where: { isPrimary: true },
-              take: 1
-            }
+            images: { where: { isPrimary: true }, take: 1 },
+            bulkDiscounts: true
           }
         }
       },
-      orderBy: {
-        createdAt: 'desc'
-      }
+      orderBy: { createdAt: 'desc' }
     });
 
-    // Calculate cart totals
-    const subtotal = cartItems.reduce((sum, item) => sum + (item.priceAtAdd * item.quantity), 0);
-    const itemCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
+    // Recalculate totals with bulk discounts applied
+    let subtotal = 0;
+    const itemsWithDiscount = cartItems.map(item => {
+      const effectivePrice = applyBulkDiscount(
+        item.priceAtAdd,
+        item.quantity,
+        item.product?.bulkDiscounts
+      );
+      const itemTotal = effectivePrice * item.quantity;
+      subtotal += itemTotal;
 
-    console.log(`Found ${cartItems.length} cart items for user ${userId}`);
+      return {
+        ...item,
+        effectivePrice: parseFloat(effectivePrice.toFixed(2)),
+        itemTotal: parseFloat(itemTotal.toFixed(2)),
+        discountApplied: effectivePrice < item.priceAtAdd,
+        // Stock availability status — frontend can show warning
+        inStock: item.product ? item.product.totalStock >= item.quantity : false,
+        availableStock: item.product?.totalStock || 0
+      };
+    });
+
+    const itemCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
 
     return res.status(200).json({
       success: true,
       message: 'Cart retrieved successfully.',
       data: {
-        items: cartItems,
-        subtotal,
+        items: itemsWithDiscount,
+        subtotal: parseFloat(subtotal.toFixed(2)),
         itemCount
       }
     });
   } catch (error) {
     console.error('Get cart error:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error while fetching cart.'
-    });
+    return res.status(500).json({ success: false, message: 'Internal server error while fetching cart.' });
   }
 };
 
-// Add item to cart
+// =============================================================================
+// ADD TO CART
+// =============================================================================
 const addToCart = async (req, res) => {
   try {
     const userId = req.user.id;
     const { productId, quantity = 1, bargainApplied = false } = req.body;
 
-    console.log('Add to cart request:', { userId, productId, quantity });
+    if (!productId) return res.status(400).json({ success: false, message: 'Product ID is required.' });
+    if (quantity < 1) return res.status(400).json({ success: false, message: 'Quantity must be at least 1.' });
 
-    if (!productId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Product ID is required.'
-      });
-    }
-
-    if (quantity < 1) {
-      return res.status(400).json({
-        success: false,
-        message: 'Quantity must be at least 1.'
-      });
-    }
-
-    // Check if product exists and is active
     const product = await prisma.product.findUnique({
       where: { id: parseInt(productId) },
       include: {
         bargainConfig: true,
-        images: {
-          where: { isPrimary: true },
-          take: 1
-        }
+        bulkDiscounts: true,
+        images: { where: { isPrimary: true }, take: 1 }
       }
     });
 
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: 'Product not found.'
-      });
-    }
+    if (!product) return res.status(404).json({ success: false, message: 'Product not found.' });
+    if (!product.isActive) return res.status(400).json({ success: false, message: 'Product is not available.' });
 
-    if (!product.isActive) {
-      return res.status(400).json({
-        success: false,
-        message: 'Product is not available.'
-      });
-    }
-
-    // Check stock availability (using totalStock from merged schema)
+    // 🔧 UPGRADE: Stock validation before adding to cart (Section 10.3)
     if (product.totalStock < quantity) {
       return res.status(400).json({
         success: false,
-        message: `Insufficient stock available. Only ${product.totalStock} units in stock.`
+        message: `Insufficient stock. Only ${product.totalStock} unit(s) available.`,
+        data: { availableStock: product.totalStock }
       });
     }
 
-    // Determine price
-    let priceAtAdd = product.baseSellingPrice;
+    // Determine effective price (apply bulk discount)
+    let priceAtAdd = applyBulkDiscount(product.baseSellingPrice, quantity, product.bulkDiscounts);
+    priceAtAdd = parseFloat(priceAtAdd.toFixed(2));
 
-    // Check if item already in cart
     const existingCartItem = await prisma.cart.findUnique({
-      where: {
-        userId_productId: {
-          userId,
-          productId: parseInt(productId)
-        }
-      }
+      where: { userId_productId: { userId, productId: parseInt(productId) } }
     });
 
     let cartItem;
 
     if (existingCartItem) {
-      // Update existing cart item
       const newQuantity = existingCartItem.quantity + quantity;
 
-      // Check if new quantity exceeds stock
+      // 🔧 Validate updated total quantity against stock
       if (product.totalStock < newQuantity) {
         return res.status(400).json({
           success: false,
-          message: `Only ${product.totalStock} units available.`
+          message: `Only ${product.totalStock} unit(s) available. You already have ${existingCartItem.quantity} in your cart.`,
+          data: { availableStock: product.totalStock, inCart: existingCartItem.quantity }
         });
       }
 
+      // Recalculate price with new quantity
+      const newPrice = applyBulkDiscount(product.baseSellingPrice, newQuantity, product.bulkDiscounts);
+
       cartItem = await prisma.cart.update({
-        where: {
-          id: existingCartItem.id
-        },
-        data: {
-          quantity: newQuantity,
-          priceAtAdd,
-          bargainApplied
-        },
-        include: {
-          product: {
-            include: {
-              images: {
-                where: { isPrimary: true },
-                take: 1
-              }
-            }
-          }
-        }
+        where: { id: existingCartItem.id },
+        data: { quantity: newQuantity, priceAtAdd: parseFloat(newPrice.toFixed(2)), bargainApplied },
+        include: { product: { include: { images: { where: { isPrimary: true }, take: 1 } } } }
       });
-
-      console.log('Updated existing cart item:', cartItem.id);
     } else {
-      // Create new cart item
       cartItem = await prisma.cart.create({
-        data: {
-          userId,
-          productId: parseInt(productId),
-          quantity,
-          priceAtAdd,
-          bargainApplied
-        },
-        include: {
-          product: {
-            include: {
-              images: {
-                where: { isPrimary: true },
-                take: 1
-              }
-            }
-          }
-        }
+        data: { userId, productId: parseInt(productId), quantity, priceAtAdd, bargainApplied },
+        include: { product: { include: { images: { where: { isPrimary: true }, take: 1 } } } }
       });
-
-      console.log('Created new cart item:', cartItem.id);
     }
 
     return res.status(201).json({
@@ -183,165 +163,150 @@ const addToCart = async (req, res) => {
     });
   } catch (error) {
     console.error('Add to cart error:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error while adding to cart.'
-    });
+    return res.status(500).json({ success: false, message: 'Internal server error while adding to cart.' });
   }
 };
 
-// Update cart item quantity
+// =============================================================================
+// UPDATE CART ITEM
+// =============================================================================
 const updateCartItem = async (req, res) => {
   try {
     const userId = req.user.id;
     const { id } = req.params;
     const { quantity } = req.body;
 
-    console.log('Update cart item request:', { userId, cartItemId: id, quantity });
+    if (!quantity || quantity < 1) return res.status(400).json({ success: false, message: 'Valid quantity is required.' });
 
-    if (!quantity || quantity < 1) {
-      return res.status(400).json({
-        success: false,
-        message: 'Valid quantity is required.'
-      });
-    }
-
-    // Find cart item
     const cartItem = await prisma.cart.findUnique({
       where: { id: parseInt(id) },
-      include: {
-        product: true
-      }
+      include: { product: { include: { bulkDiscounts: true } } }
     });
 
-    if (!cartItem) {
-      return res.status(404).json({
-        success: false,
-        message: 'Cart item not found.'
-      });
-    }
+    if (!cartItem) return res.status(404).json({ success: false, message: 'Cart item not found.' });
+    if (cartItem.userId !== userId) return res.status(403).json({ success: false, message: 'Access denied.' });
 
-    // Verify ownership
-    if (cartItem.userId !== userId) {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied.'
-      });
-    }
-
-    // Check stock availability
+    // 🔧 UPGRADE: Stock validation on update (Section 10.3)
     if (cartItem.product.totalStock < quantity) {
       return res.status(400).json({
         success: false,
-        message: `Only ${cartItem.product.totalStock} units available.`
+        message: `Only ${cartItem.product.totalStock} unit(s) available.`,
+        data: { availableStock: cartItem.product.totalStock }
       });
     }
 
-    // Update quantity
+    // Recalculate price with new quantity (bulk discount may change tier)
+    const newPrice = applyBulkDiscount(cartItem.product.baseSellingPrice, quantity, cartItem.product.bulkDiscounts);
+
     const updatedCartItem = await prisma.cart.update({
       where: { id: parseInt(id) },
-      data: { quantity },
-      include: {
-        product: {
-          include: {
-            images: {
-              where: { isPrimary: true },
-              take: 1
-            }
-          }
-        }
-      }
+      data: { quantity, priceAtAdd: parseFloat(newPrice.toFixed(2)) },
+      include: { product: { include: { images: { where: { isPrimary: true }, take: 1 } } } }
     });
 
-    console.log('Cart item updated:', updatedCartItem.id);
-
-    return res.status(200).json({
-      success: true,
-      message: 'Cart item updated successfully.',
-      data: updatedCartItem
-    });
+    return res.status(200).json({ success: true, message: 'Cart item updated successfully.', data: updatedCartItem });
   } catch (error) {
     console.error('Update cart item error:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error while updating cart item.'
-    });
+    return res.status(500).json({ success: false, message: 'Internal server error while updating cart item.' });
   }
 };
 
-// Remove item from cart
+// =============================================================================
+// REMOVE FROM CART
+// =============================================================================
 const removeFromCart = async (req, res) => {
   try {
     const userId = req.user.id;
     const { id } = req.params;
 
-    console.log('Remove from cart request:', { userId, cartItemId: id });
+    const cartItem = await prisma.cart.findUnique({ where: { id: parseInt(id) } });
+    if (!cartItem) return res.status(404).json({ success: false, message: 'Cart item not found.' });
+    if (cartItem.userId !== userId) return res.status(403).json({ success: false, message: 'Access denied.' });
 
-    // Find cart item
-    const cartItem = await prisma.cart.findUnique({
-      where: { id: parseInt(id) }
-    });
+    await prisma.cart.delete({ where: { id: parseInt(id) } });
 
-    if (!cartItem) {
-      return res.status(404).json({
-        success: false,
-        message: 'Cart item not found.'
-      });
-    }
-
-    // Verify ownership
-    if (cartItem.userId !== userId) {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied.'
-      });
-    }
-
-    // Delete cart item
-    await prisma.cart.delete({
-      where: { id: parseInt(id) }
-    });
-
-    console.log('Cart item removed:', id);
-
-    return res.status(200).json({
-      success: true,
-      message: 'Item removed from cart successfully.',
-      data: { id: parseInt(id) }
-    });
+    return res.status(200).json({ success: true, message: 'Item removed from cart successfully.', data: { id: parseInt(id) } });
   } catch (error) {
     console.error('Remove from cart error:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error while removing from cart.'
-    });
+    return res.status(500).json({ success: false, message: 'Internal server error while removing from cart.' });
   }
 };
 
-// Clear entire cart
+// =============================================================================
+// CLEAR CART
+// =============================================================================
 const clearCart = async (req, res) => {
   try {
     const userId = req.user.id;
-
-    console.log('Clear cart request for user:', userId);
-
-    const result = await prisma.cart.deleteMany({
-      where: { userId }
-    });
-
-    console.log(`Cleared ${result.count} items from cart`);
-
-    return res.status(200).json({
-      success: true,
-      message: 'Cart cleared successfully.',
-      data: { deletedCount: result.count }
-    });
+    const result = await prisma.cart.deleteMany({ where: { userId } });
+    return res.status(200).json({ success: true, message: 'Cart cleared successfully.', data: { deletedCount: result.count } });
   } catch (error) {
     console.error('Clear cart error:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error while clearing cart.'
+    return res.status(500).json({ success: false, message: 'Internal server error while clearing cart.' });
+  }
+};
+
+// =============================================================================
+// 🆕 VALIDATE CART STOCK — called before checkout (Section 10.3)
+// POST /api/cart/validate
+// Returns items that are out-of-stock or have insufficient stock
+// =============================================================================
+const validateCartStock = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const cartItems = await prisma.cart.findMany({
+      where: { userId },
+      include: { product: true }
     });
+
+    if (cartItems.length === 0) {
+      return res.status(400).json({ success: false, message: 'Cart is empty.' });
+    }
+
+    const issues = [];
+    const valid = [];
+
+    for (const item of cartItems) {
+      if (!item.product || !item.product.isActive) {
+        issues.push({
+          cartItemId: item.id,
+          productId: item.productId,
+          productName: item.product?.name || 'Unknown',
+          reason: 'Product is no longer available.',
+          requested: item.quantity,
+          available: 0
+        });
+        continue;
+      }
+
+      if (item.product.totalStock < item.quantity) {
+        issues.push({
+          cartItemId: item.id,
+          productId: item.productId,
+          productName: item.product.name,
+          reason: item.product.totalStock === 0 ? 'Out of stock.' : `Only ${item.product.totalStock} unit(s) available.`,
+          requested: item.quantity,
+          available: item.product.totalStock
+        });
+      } else {
+        valid.push(item.id);
+      }
+    }
+
+    return res.status(200).json({
+      success: issues.length === 0,
+      message: issues.length === 0 ? 'All cart items are available.' : 'Some items have stock issues.',
+      data: {
+        canCheckout: issues.length === 0,
+        issues,
+        validItemCount: valid.length,
+        totalItems: cartItems.length
+      }
+    });
+  } catch (error) {
+    console.error('Validate cart stock error:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error while validating cart.' });
   }
 };
 
@@ -350,5 +315,6 @@ module.exports = {
   addToCart,
   updateCartItem,
   removeFromCart,
-  clearCart
+  clearCart,
+  validateCartStock
 };
