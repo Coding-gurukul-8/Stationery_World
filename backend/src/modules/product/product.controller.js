@@ -861,7 +861,7 @@ const customerSearch = async (req, res) => {
     if (rawSearch.length > 200) return res.status(400).json({ success: false, message: 'search must be 200 characters or fewer.' });
 
     const page = Math.max(1, parseInt(pageQuery) || 1);
-    const limit = Math.min(parseInt(limitQuery) || 20, 100);
+    const limit = Math.min(parseInt(limitQuery) || 100, 200);
     const skip = (page - 1) * limit;
     const terms = rawSearch.split(/\s+/).filter(Boolean);
     const upperSearch = rawSearch.toUpperCase();
