@@ -1,10 +1,12 @@
 // =====================================================
 // STATIONERY WORLD — COMPLETE PRISMA SCHEMA
-// Version: 3.0.0
-// Changes from v2.1.0:
-//   - User: added lastSeenAt (sliding JWT / 10-day auto-logout)
-//   - ProductVariantGroup: new model linking similar products (colors, sizes, types)
-//   - AdminPaymentSettings: UPI ID + QR code per admin
+// Version: 4.0.0  (Upgrade 2026)
+// New in v4.0.0:
+//   - Product.mrp (Float?) — MRP field; TOYS default SP × 1.2
+//   - SearchLog model — stores all search queries for analytics
+//   - Order.pickupTime / deliverySlot — optional pickup/delivery time slot
+//   - DB indexes on users.email for fast login lookup
+//   - Unsupported tsvector column added via migration (GIN index for FTS)
 // =====================================================
 
 generator client {
@@ -40,10 +42,7 @@ model User {
   role         Role    @default(CUSTOMER)
   isActive     Boolean @default(true)
 
-  // ── Sliding-session tracking ──────────────────────────────────────────────
-  // Updated on every authenticated request via authMiddleware.
-  // If now - lastSeenAt > 10 days the token is treated as expired even if the
-  // JWT signature is still valid — user must log in again.
+  // Sliding-session tracking
   lastSeenAt   DateTime @default(now())
 
   // Relations
@@ -65,11 +64,13 @@ model User {
   bargainRequests      BargainRequest[]      @relation("UserBargainRequests")
   bargainReviewedRequests BargainRequest[]   @relation("BargainRequestReview")
   paymentSettings      AdminPaymentSettings?
+  searchLogs           SearchLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("users")
+  @@index([email])
 }
 
 enum Role {
@@ -113,6 +114,8 @@ model Product {
   // Pricing
   costPrice        Float
   baseSellingPrice Float
+  // 🆕 MRP field — TOYS default: MRP = SP × 1.2. null = not set (show SP only)
+  mrp              Float?
   bargainable      Boolean @default(true)
 
   // Stock Management
@@ -141,6 +144,7 @@ model Product {
   cartItems          Cart[]
   notifications      ProductNotification[]
   bulkDiscounts      BulkDiscount[]
+  searchLogs         SearchLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -149,34 +153,21 @@ model Product {
   @@index([name])
   @@index([uid])
   @@index([category])
+  @@index([subCategory])
   @@index([variantGroupId])
+  @@index([baseSellingPrice])
+  @@index([createdAt])
+  @@index([isActive])
 }
 
 // =====================================================
 // PRODUCT VARIANT GROUPS
-// Links similar products that differ only by color/size/type/style.
-//
-// Examples:
-//   Linc Pentonic pens → group "Linc Pentonic", type COLOR
-//     - Blue variant  (Product id=1)
-//     - Black variant (Product id=2)
-//     - Red variant   (Product id=3)
-//
-//   Classmate Notebook → group "Classmate NB 160pg", type SIZE
-//     - Plain 160pg   (Product id=4)
-//     - Ruled 160pg   (Product id=5)
-//     - Plain 240pg   (Product id=6)
-//
-//   Face-changing Keychain → group "Face Keychain", type STYLE
-//     - Shinchan       (Product id=7)
-//     - Doraemon       (Product id=8)
-//     - Capybara       (Product id=9)
 // =====================================================
 
 model ProductVariantGroup {
   id          Int                 @id @default(autoincrement())
-  name        String              // Display name for the group
-  variantType VariantType         // COLOR | SIZE | TYPE | STYLE
+  name        String
+  variantType VariantType
   description String?
 
   products    Product[]
@@ -189,10 +180,10 @@ model ProductVariantGroup {
 }
 
 enum VariantType {
-  COLOR   // e.g. Blue/Black/Red pen
-  SIZE    // e.g. 160pg/240pg/320pg notebook
-  TYPE    // e.g. Plain/Ruled/Single-rule pages
-  STYLE   // e.g. Shinchan/Doraemon/Capybara keychain
+  COLOR
+  SIZE
+  TYPE
+  STYLE
 }
 
 model ProductImage {
@@ -202,7 +193,7 @@ model ProductImage {
   url       String
   altText   String?
   isPrimary Boolean @default(false)
-  position  Int     @default(0)   // explicit ordering — 0 = primary slot
+  position  Int     @default(0)
 
   createdAt DateTime @default(now())
 
@@ -238,6 +229,28 @@ enum Category {
   STATIONERY
   BOOKS
   TOYS
+}
+
+// =====================================================
+// 🆕 SEARCH LOG — stores every search query for analytics
+// Self-learning: after search-and-click, clicked product's
+// keywords[] are auto-updated with the search term.
+// =====================================================
+
+model SearchLog {
+  id               Int      @id @default(autoincrement())
+  user             User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId           Int?
+  query            String
+  clickedProduct   Product? @relation(fields: [clickedProductId], references: [id], onDelete: SetNull)
+  clickedProductId Int?
+  createdAt        DateTime @default(now())
+
+  @@map("search_logs")
+  @@index([userId])
+  @@index([query])
+  @@index([createdAt])
+  @@index([clickedProductId])
 }
 
 // =====================================================
@@ -451,6 +464,10 @@ model Order {
   country        String?
   note           String?
 
+  // 🆕 Optional pickup/delivery time slot (Section 6.3)
+  pickupTime   String?   // free-text slot, e.g. "10 AM – 12 PM"
+  deliverySlot String?   // optional delivery window
+
   totalAmount Float @default(0)
   totalSp     Float @default(0)
   totalCp     Float @default(0)
@@ -571,18 +588,14 @@ model Payment {
   @@index([status])
 }
 
-// ── UPI / QR payment settings per admin ──────────────────────────────────────
-// Each admin (shop keeper) sets their UPI ID and optionally uploads a QR code.
-// Customers see this when paying for orders belonging to that admin's products.
-
 model AdminPaymentSettings {
   id        Int    @id @default(autoincrement())
   admin     User   @relation(fields: [adminId], references: [id], onDelete: Cascade)
   adminId   Int    @unique
 
-  upiId     String?   // e.g. priyanshu@upi
-  qrCodeUrl String?   // Supabase Storage public URL for the QR image
-  displayName String? // Friendly name shown to customers, e.g. "Stationery World"
+  upiId     String?
+  qrCodeUrl String?
+  displayName String?
   isActive  Boolean @default(true)
 
   createdAt DateTime @default(now())
