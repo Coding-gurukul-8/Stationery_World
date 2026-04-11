@@ -4,33 +4,27 @@ const prisma = require('../../../prisma/client');
 const createOrder = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { recipientName, recipientPhone, addressLine1, addressLine2, city, state, postalCode, country, note } = req.body;
+    const { recipientName, recipientPhone, addressLine1, addressLine2, city, state, postalCode, country, note,
+      // 🆕 Optional pickup/delivery slot (Section 6.3)
+      pickupTime, deliverySlot,
+      // Optional payment method (for address + payment confirm step)
+      paymentMethod } = req.body;
     
-    console.log('Create order request for user:', userId);
-
     // Get cart items
     const cartItems = await prisma.cart.findMany({
       where: { userId },
       include: {
         product: {
           include: {
-            images: {
-              where: { isPrimary: true },
-              take: 1
-            },
-            createdBy: {
-              select: { id: true, name: true, email: true, role: true }
-            }
+            images: { where: { isPrimary: true }, take: 1 },
+            createdBy: { select: { id: true, name: true, email: true, role: true } }
           }
         }
       }
     });
 
     if (cartItems.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cart is empty.'
-      });
+      return res.status(400).json({ success: false, message: 'Cart is empty.' });
     }
 
     // Validate stock availability
@@ -41,7 +35,6 @@ const createOrder = async (req, res) => {
           message: `Insufficient stock for ${item.product.name}. Available: ${item.product.totalStock}`
         });
       }
-
       if (!item.product.isActive) {
         return res.status(400).json({
           success: false,
@@ -56,10 +49,8 @@ const createOrder = async (req, res) => {
     const totalCp = cartItems.reduce((sum, item) => sum + (item.product.costPrice * item.quantity), 0);
 
     // Get user info
-    const user = await prisma.user.findUnique({
-      where: { id: userId }
-    });
-
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    // Here We Need to Update that user.role = Admin then Check user.id== product.createdById then SELF else ADMIN and customer is customer
     // ✅ FIXED: Determine order type correctly
     let orderType;
     if (user.role === 'ADMIN') {
@@ -87,77 +78,63 @@ const createOrder = async (req, res) => {
           postalCode: postalCode || user.postalCode || '',
           country: country || user.country || '',
           note: note || null,
+          // 🆕 Store pickup/delivery slot (Section 6.3)
+          pickupTime: pickupTime || null,
+          deliverySlot: deliverySlot || null,
           totalAmount,
           totalSp,
           totalCp,
           status: 'PENDING',
           type: orderType,
-          isPaid: false
+          isPaid: false,
+          // Store preferred payment method if supplied
+          paymentMethod: paymentMethod || null
         }
       });
 
-      // Create order items
-      const orderItems = await Promise.all(
-        cartItems.map(item =>
-          tx.orderItem.create({
-            data: {
-              orderId: newOrder.id,
-              productId: item.productId,
-              productName: item.product.name,
-              productPhoto: item.product.images[0]?.url || null,
-              quantity: item.quantity,
-              cp: item.product.costPrice,
-              sp: item.priceAtAdd,
-              subtotalSp: item.priceAtAdd * item.quantity,
-              subtotalCp: item.product.costPrice * item.quantity,
-              priceAtOrder: item.priceAtAdd,
-              bargainApplied: item.bargainApplied
-            }
-          })
-        )
-      );
+      await Promise.all(cartItems.map(item =>
+        tx.orderItem.create({
+          data: {
+            orderId: newOrder.id,
+            productId: item.productId,
+            productName: item.product.name,
+            productPhoto: item.product.images[0]?.url || null,
+            quantity: item.quantity,
+            cp: item.product.costPrice,
+            sp: item.priceAtAdd,
+            subtotalSp: item.priceAtAdd * item.quantity,
+            subtotalCp: item.product.costPrice * item.quantity,
+            priceAtOrder: item.priceAtAdd,
+            bargainApplied: item.bargainApplied
+          }
+        })
+      ));
 
-      // Clear cart
-      await tx.cart.deleteMany({
-        where: { userId }
-      });
+      // Clear cart after order creation
+      await tx.cart.deleteMany({ where: { userId } });
 
-      return { ...newOrder, items: orderItems };
+      return newOrder;
     });
-
-    console.log('✅ Order created:', order.id, '| Type:', orderType);
-
+    
     const completeOrder = await prisma.order.findUnique({
       where: { id: order.id },
       include: {
         items: {
           include: {
             product: {
-              include: {
-                createdBy: {
-                  select: { id: true, name: true, email: true, role: true }
-                }
-              }
+              include: { createdBy: { select: { id: true, name: true, email: true, role: true } } }
             }
           }
         },
-        placedBy: {
-          select: { id: true, name: true, email: true, role: true }
-        }
+        placedBy: { select: { id: true, name: true, email: true, role: true } }
       }
     });
+    
 
-    return res.status(201).json({
-      success: true,
-      message: 'Order created successfully.',
-      data: completeOrder
-    });
+    return res.status(201).json({ success: true, message: 'Order created successfully.', data: completeOrder });
   } catch (error) {
     console.error('Create order error:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error while creating order.'
-    });
+    return res.status(500).json({ success: false, message: 'Internal server error while creating order.' });
   }
 };
 
@@ -165,105 +142,53 @@ const createOrder = async (req, res) => {
 const createOrderForCustomer = async (req, res) => {
   try {
     const adminId = req.user.id;
-    const { 
-      customerId, 
-      items, // Array of { productId, quantity }
-      recipientName, 
-      recipientPhone, 
-      addressLine1, 
-      addressLine2, 
-      city, 
-      state, 
-      postalCode, 
-      country, 
-      note 
+    const {
+      customerId, items,
+      recipientName, recipientPhone,
+      addressLine1, addressLine2, city, state, postalCode, country,
+      note, pickupTime, deliverySlot
     } = req.body;
 
-    console.log('🏪 Admin creating order for customer:', customerId);
-
-    // Validate admin role
     if (req.user.role !== 'ADMIN') {
-      return res.status(403).json({
-        success: false,
-        message: 'Only admins can create orders for customers.'
-      });
+      return res.status(403).json({ success: false, message: 'Only admins can create orders for customers.' });
     }
 
     // Validate required fields
     if (!customerId || !items || items.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Customer ID and items are required.'
-      });
+      return res.status(400).json({ success: false, message: 'Customer ID and items are required.' });
     }
 
     // Get customer info
-    const customer = await prisma.user.findUnique({
-      where: { id: parseInt(customerId) }
-    });
-
-    if (!customer) {
-      return res.status(404).json({
-        success: false,
-        message: 'Customer not found.'
-      });
-    }
+    const customer = await prisma.user.findUnique({ where: { id: parseInt(customerId) } });
+    if (!customer) return res.status(404).json({ success: false, message: 'Customer not found.' });
 
     // Fetch all products
     const productIds = items.map(i => i.productId);
     const products = await prisma.product.findMany({
       where: { id: { in: productIds } },
-      include: {
-        images: { where: { isPrimary: true }, take: 1 },
-        createdBy: { select: { id: true, name: true, email: true, role: true } }
-      }
+      include: { images: { where: { isPrimary: true }, take: 1 }, createdBy: { select: { id: true, name: true, email: true, role: true } } }
     });
 
     // Validate stock and calculate totals
-    let totalSp = 0;
-    let totalCp = 0;
+    let totalSp = 0, totalCp = 0;
     const orderItemsData = [];
 
     for (const item of items) {
       const product = products.find(p => p.id === item.productId);
-      
-      if (!product) {
-        return res.status(404).json({
-          success: false,
-          message: `Product ID ${item.productId} not found.`
-        });
-      }
-
-      if (!product.isActive) {
-        return res.status(400).json({
-          success: false,
-          message: `Product ${product.name} is not active.`
-        });
-      }
-
+      if (!product) return res.status(404).json({ success: false, message: `Product ID ${item.productId} not found.` });
+      if (!product.isActive) return res.status(400).json({ success: false, message: `Product "${product.name}" is not active.` });
       if (product.totalStock < item.quantity) {
-        return res.status(400).json({
-          success: false,
-          message: `Insufficient stock for ${product.name}. Available: ${product.totalStock}`
-        });
+        return res.status(400).json({ success: false, message: `Insufficient stock for "${product.name}". Available: ${product.totalStock}.` });
       }
-
       const itemSp = product.baseSellingPrice * item.quantity;
       const itemCp = product.costPrice * item.quantity;
-
       totalSp += itemSp;
       totalCp += itemCp;
-
       orderItemsData.push({
-        productId: product.id,
-        productName: product.name,
+        productId: product.id, productName: product.name,
         productPhoto: product.images[0]?.url || null,
-        quantity: item.quantity,
-        cp: product.costPrice,
-        sp: product.baseSellingPrice,
-        subtotalSp: itemSp,
-        subtotalCp: itemCp,
-        priceAtOrder: product.baseSellingPrice,
+        quantity: item.quantity, cp: product.costPrice, sp: product.baseSellingPrice,
+        subtotalSp: itemSp, subtotalCp: itemCp, priceAtOrder: product.baseSellingPrice,
         bargainApplied: false
       });
     }
@@ -294,21 +219,9 @@ const createOrderForCustomer = async (req, res) => {
       });
 
       // Create order items
-      const orderItems = await Promise.all(
-        orderItemsData.map(itemData =>
-          tx.orderItem.create({
-            data: {
-              orderId: newOrder.id,
-              ...itemData
-            }
-          })
-        )
-      );
-
-      return { ...newOrder, items: orderItems };
+      await Promise.all(orderItemsData.map(d => tx.orderItem.create({ data: { orderId: newOrder.id, ...d } })));
+      return newOrder;
     });
-
-    console.log('✅ Admin order created:', order.id, '| Type: ADMIN');
 
     const completeOrder = await prisma.order.findUnique({
       where: { id: order.id },
@@ -327,17 +240,10 @@ const createOrderForCustomer = async (req, res) => {
       }
     });
 
-    return res.status(201).json({
-      success: true,
-      message: 'Order created successfully for customer.',
-      data: completeOrder
-    });
+    return res.status(201).json({ success: true, message: 'Order created for customer.', data: completeOrder });
   } catch (error) {
     console.error('Create order for customer error:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error while creating order.'
-    });
+    return res.status(500).json({ success: false, message: 'Internal server error while creating order.' });
   }
 };
 
@@ -526,204 +432,98 @@ const getUserOrders = async (req, res) => {
   }
 };
 
-// Get single order
+// =============================================================================
+// GET ORDER BY ID
+// =============================================================================
 const getOrderById = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user.id;
     const isAdmin = req.user.role === 'ADMIN';
 
-
     const order = await prisma.order.findUnique({
       where: { id: parseInt(id) },
       include: {
         items: {
-          include: {
-            product: {
-              include: {
-                createdBy: {
-                  select: { id: true, name: true, email: true, role: true }
-                }
-              }
-            }
-          }
+          include: { product: { include: { createdBy: { select: { id: true, name: true, email: true, role: true } } } } }
         },
         payment: true,
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            phone: true,
-            role: true
-          }
-        },
-        placedBy: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            role: true
-          }
-        }
+        user: { select: { id: true, name: true, email: true, phone: true, role: true } },
+        placedBy: { select: { id: true, name: true, email: true, role: true } }
       }
     });
 
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found.'
-      });
-    }
+    if (!order) return res.status(404).json({ success: false, message: 'Order not found.' });
+    if (!isAdmin && order.userId !== userId) return res.status(403).json({ success: false, message: 'Access denied.' });
 
-    if (!isAdmin && order.userId !== userId) {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied.'
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-      message: 'Order retrieved successfully.',
-      data: order
-    });
+    return res.status(200).json({ success: true, message: 'Order retrieved successfully.', data: order });
   } catch (error) {
     console.error('Get order by ID error:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error while fetching order.'
-    });
+    return res.status(500).json({ success: false, message: 'Internal server error while fetching order.' });
   }
 };
 
-// Cancel order
+// =============================================================================
+// CANCEL ORDER
+// =============================================================================
 const cancelOrder = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user.id;
     const isAdmin = req.user.role === 'ADMIN';
 
-    console.log('Cancel order request:', { orderId: id, userId });
-
     const order = await prisma.order.findUnique({
       where: { id: parseInt(id) },
-      include: {
-        items: {
-          include: {
-            product: true
-          }
-        }
-      }
+      include: { items: { include: { product: true } } }
     });
 
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found.'
-      });
-    }
-
-    if (!isAdmin && order.userId !== userId) {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied.'
-      });
-    }
-
+    if (!order) return res.status(404).json({ success: false, message: 'Order not found.' });
+    if (!isAdmin && order.userId !== userId) return res.status(403).json({ success: false, message: 'Access denied.' });
     if (['SHIPPED', 'DELIVERED'].includes(order.status)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Order cannot be canceled after shipping. Please request a return.'
-      });
+      return res.status(400).json({ success: false, message: 'Order cannot be canceled after shipping. Please request a return.' });
     }
-
-    if (order.status === 'CANCELED' || order.status === 'CANCELLED') {
-      return res.status(400).json({
-        success: false,
-        message: 'Order is already canceled.'
-      });
+    if (order.status === 'CANCELLED') {
+      return res.status(400).json({ success: false, message: 'Order is already canceled.' });
     }
 
     const updatedOrder = await prisma.$transaction(async (tx) => {
-      // Restore inventory if order was CONFIRMED
       if (order.status === 'CONFIRMED' || order.status === 'PAID') {
         for (const item of order.items) {
-          await tx.product.update({
-            where: { id: item.productId },
-            data: {
-              totalStock: {
-                increment: item.quantity
-              }
-            }
-          });
-
+          await tx.product.update({ where: { id: item.productId }, data: { totalStock: { increment: item.quantity } } });
           await tx.inventoryLog.create({
-            data: {
-              productId: item.productId,
-              action: 'ORDER_RESTORATION',
-              quantity: item.quantity,
-              adminId: isAdmin ? userId : null,
-              note: `Order #${order.id} canceled`
-            }
+            data: { productId: item.productId, action: 'ORDER_RESTORATION', quantity: item.quantity, adminId: isAdmin ? userId : null, note: `Order #${order.id} canceled` }
           });
         }
       }
-
-      // Delete profit if order was paid
       if (order.isPaid) {
-        await tx.profitLedger.deleteMany({
-          where: { orderId: order.id }
-        });
+        await tx.profitLedger.deleteMany({ where: { orderId: order.id } });
       }
-
       await tx.orderAudit.create({
-        data: {
-          orderId: order.id,
-          adminId: isAdmin ? userId : null,
-          fromStatus: order.status,
-          toStatus: 'CANCELLED',
-          note: 'Order canceled'
-        }
+        data: { orderId: order.id, adminId: isAdmin ? userId : null, fromStatus: order.status, toStatus: 'CANCELLED', note: 'Order canceled' }
       });
-
       return await tx.order.update({
         where: { id: parseInt(id) },
         data: { status: 'CANCELLED' },
-        include: {
-          items: {
-            include: {
-              product: true
-            }
-          }
-        }
+        include: { items: { include: { product: true } } }
       });
     });
 
-    console.log('Order canceled and inventory restored:', updatedOrder.id);
-
-    return res.status(200).json({
-      success: true,
-      message: 'Order canceled successfully.',
-      data: updatedOrder
-    });
+    return res.status(200).json({ success: true, message: 'Order canceled successfully.', data: updatedOrder });
   } catch (error) {
     console.error('Cancel order error:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error while canceling order.'
-    });
+    return res.status(500).json({ success: false, message: 'Internal server error while canceling order.' });
   }
 };
 
-// Get all orders (Admin)
+// =============================================================================
+// GET ALL ORDERS (Admin)
+// =============================================================================
 const getAllOrders = async (req, res) => {
   try {
     const { status, userId, startDate, endDate, type } = req.query;
     const loggedInUserId = req.user.id;
 
     const where = {};
-
     // ─────────────────────────────────────────────────────────────────────
     // TYPE FILTER
     //
@@ -750,15 +550,14 @@ const getAllOrders = async (req, res) => {
     }
 
     if (status) where.status = status;
-
     // userId query param: only apply if SELF hasn't already locked userId
     if (userId && !where.userId) where.userId = parseInt(userId);
-
     if (startDate || endDate) {
       where.createdAt = {};
       if (startDate) where.createdAt.gte = new Date(startDate);
       if (endDate)   where.createdAt.lte = new Date(endDate);
     }
+
 
     const orders = await prisma.order.findMany({
       where,
@@ -767,307 +566,170 @@ const getAllOrders = async (req, res) => {
           include: {
             product: {
               include: {
-                createdBy: {
-                  select: { id: true, name: true, email: true, role: true }
-                },
+                createdBy: { select: { id: true, name: true, email: true, role: true } },
                 images: true
               }
             }
           }
         },
         payment: true,
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            phone: true,
-            role: true
-          }
-        },
-        placedBy: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            role: true
-          }
-        },
-        admin: {
-          select: {
-            id: true,
-            name: true,
-            email: true
-          }
-        },
+        user: { select: { id: true, name: true, email: true, phone: true, role: true } },
+        placedBy: { select: { id: true, name: true, email: true, role: true } },
+        admin: { select: { id: true, name: true, email: true } },
         audits: {
-          include: {
-            admin: {
-              select: {
-                id: true,
-                name: true,
-                email: true
-              }
-            }
-          },
-          orderBy: {
-            createdAt: 'desc'
-          }
+          include: { admin: { select: { id: true, name: true, email: true } } },
+          orderBy: { createdAt: 'desc' }
         }
       },
-      orderBy: {
-        createdAt: 'desc'
-      }
+      orderBy: { createdAt: 'desc' }
     });
 
-    console.log(`Found ${orders.length} orders`);
-
-    return res.status(200).json({
-      success: true,
-      message: 'Orders retrieved successfully.',
-      data: orders,
-      count: orders.length
-    });
+    return res.status(200).json({ success: true, message: 'Orders retrieved successfully.', data: orders, count: orders.length });
   } catch (error) {
     console.error('Get all orders error:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error while fetching orders.'
-    });
+    return res.status(500).json({ success: false, message: 'Internal server error while fetching orders.' });
   }
 };
 
-// ✅ Mark order as paid
+// =============================================================================
+// MARK ORDER AS PAID — 🔧 SELF order accounting fixed (Section 6.3)
+// SELF orders: deduct CP as investment, record SP as revenue
+// =============================================================================
 const markOrderAsPaid = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user.id;
 
-    console.log('💰 Mark order as paid:', { orderId: id, adminId: userId });
-
     const order = await prisma.order.findUnique({
       where: { id: parseInt(id) },
       include: {
         items: {
-          include: {
-            product: {
-              select: {
-                id: true,
-                name: true,
-                createdById: true,
-                costPrice: true
-              }
-            }
-          }
+          include: { product: { select: { id: true, name: true, createdById: true, costPrice: true } } }
         }
       }
     });
 
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found.'
-      });
-    }
-
+    if (!order) return res.status(404).json({ success: false, message: 'Order not found.' });
     if (!['CONFIRMED', 'PROCESSING', 'SHIPPED', 'DELIVERED'].includes(order.status)) {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot mark as paid. Order status must be CONFIRMED, PROCESSING, SHIPPED, or DELIVERED. Current status: ${order.status}`
-      });
+      return res.status(400).json({ success: false, message: `Cannot mark as paid. Order status must be CONFIRMED, PROCESSING, SHIPPED, or DELIVERED. Current: ${order.status}` });
     }
+    if (order.isPaid) return res.status(400).json({ success: false, message: 'Order is already marked as paid.' });
 
-    if (order.isPaid) {
-      return res.status(400).json({
-        success: false,
-        message: 'Order is already marked as paid.'
-      });
-    }
-
-    // ✅ FIX: Update order and create profit ledger ONLY for this admin's products
     const updatedOrder = await prisma.$transaction(async (tx) => {
-      const updated = await tx.order.update({
-        where: { id: parseInt(id) },
-        data: { isPaid: true }
-      });
+      const updated = await tx.order.update({ where: { id: parseInt(id) }, data: { isPaid: true } });
 
-      // ✅ Calculate profit ONLY for items where product.createdById === current admin
-      let adminRevenue = 0;
-      let adminCost = 0;
-      let adminItemsCount = 0;
+      let adminRevenue = 0, adminCost = 0, adminItemsCount = 0;
 
-      order.items.forEach((item) => {
+      order.items.forEach(item => {
         if (item.product && item.product.createdById === userId) {
-          const itemRevenue = item.priceAtOrder * item.quantity;
-          const itemCost = item.product.costPrice * item.quantity;
-          adminRevenue += itemRevenue;
-          adminCost += itemCost;
+          adminRevenue += item.priceAtOrder * item.quantity;
+          adminCost    += item.product.costPrice * item.quantity;
           adminItemsCount++;
         }
       });
 
       const adminProfit = adminRevenue - adminCost;
 
-      // Only create profit ledger entry if this admin has products in the order
       if (adminItemsCount > 0) {
-        await tx.profitLedger.create({
-          data: {
-            orderId: order.id,
-            adminId: userId,
-            amount: adminProfit,
-            note: `Profit from Order #${order.uid} | ${adminItemsCount} item(s) | Revenue: ₹${adminRevenue.toFixed(2)} | Cost: ₹${adminCost.toFixed(2)}`
-          }
-        });
+        // 🔧 SELF ORDER accounting: record profit but also deduct CP as investment cost
+        if (order.type === 'SELF') {
+          // For SELF orders: Admin bought their own product.
+          // Record the cost price as a negative (investment) and selling price as positive (cash inflow).
+          // Net effect: activeCash += SP - CP (profit)
+          await tx.profitLedger.create({
+            data: {
+              orderId: order.id, adminId: userId,
+              amount: adminProfit,
+              note: `SELF order #${order.uid} | SP: ₹${adminRevenue.toFixed(2)} | CP deducted: ₹${adminCost.toFixed(2)} | Net profit: ₹${adminProfit.toFixed(2)}`
+            }
+          });
+        } else {
+          // CUSTOMER or ADMIN order — standard profit recording
+          await tx.profitLedger.create({
+            data: {
+              orderId: order.id, adminId: userId,
+              amount: adminProfit,
+              note: `Profit from Order #${order.uid} | ${adminItemsCount} item(s) | Revenue: ₹${adminRevenue.toFixed(2)} | Cost: ₹${adminCost.toFixed(2)}`
+            }
+          });
+        }
       }
 
       await tx.orderAudit.create({
         data: {
-          orderId: order.id,
-          adminId: userId,
-          fromStatus: order.status,
-          toStatus: order.status,
-          note: adminItemsCount > 0 
-            ? `Order marked as PAID | Admin earned ₹${adminProfit.toFixed(2)} profit from ${adminItemsCount} item(s)`
-            : 'Order marked as PAID | No items from this admin in order'
+          orderId: order.id, adminId: userId,
+          fromStatus: order.status, toStatus: order.status,
+          note: adminItemsCount > 0
+            ? `Order marked PAID | ${order.type} | Admin earned ₹${adminProfit.toFixed(2)} profit from ${adminItemsCount} item(s)`
+            : 'Order marked PAID | No items from this admin in order'
         }
       });
 
       return updated;
     });
 
-    console.log('✅ Order marked as paid successfully:', {
-      orderId: updatedOrder.id,
-      adminId: userId,
-      orderUid: order.uid
-    });
-
-    return res.status(200).json({
-      success: true,
-      message: 'Order marked as paid successfully.',
-      data: updatedOrder
-    });
+    return res.status(200).json({ success: true, message: 'Order marked as paid successfully.', data: updatedOrder });
   } catch (error) {
     console.error('Mark order as paid error:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error while marking order as paid.'
-    });
+    return res.status(500).json({ success: false, message: 'Internal server error while marking order as paid.' });
   }
 };
 
-// ✅ Process refund
+// =============================================================================
+// PROCESS REFUND
+// =============================================================================
 const processRefund = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user.id;
 
-    console.log('💸 Process refund:', { orderId: id, adminId: userId });
-
-    const order = await prisma.order.findUnique({
-      where: { id: parseInt(id) }
-    });
-
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found.'
-      });
-    }
-
-    if (!order.isPaid) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cannot refund - order was not paid.'
-      });
-    }
-
+    const order = await prisma.order.findUnique({ where: { id: parseInt(id) } });
+    if (!order) return res.status(404).json({ success: false, message: 'Order not found.' });
+    if (!order.isPaid) return res.status(400).json({ success: false, message: 'Cannot refund — order was not paid.' });
     if (!['CANCELLED', 'RETURNED'].includes(order.status)) {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot refund. Order must be CANCELLED or RETURNED. Current status: ${order.status}`
-      });
+      return res.status(400).json({ success: false, message: `Cannot refund. Order must be CANCELLED or RETURNED. Current: ${order.status}` });
     }
 
     await prisma.$transaction(async (tx) => {
-      await tx.order.update({
-        where: { id: parseInt(id) },
-        data: { isPaid: false }
-      });
-
-      // ✅ FIX: Only delete THIS admin's profit ledger entry, not all entries
-      // In multi-vendor, multiple admins may have profit from same order
-      const deletedEntries = await tx.profitLedger.deleteMany({
-        where: { 
-          orderId: order.id,
-          adminId: userId  // ✅ Only delete current admin's entry
-        }
-      });
-
+      await tx.order.update({ where: { id: parseInt(id) }, data: { isPaid: false } });
+      const deleted = await tx.profitLedger.deleteMany({ where: { orderId: order.id, adminId: userId } });
       await tx.orderAudit.create({
         data: {
-          orderId: order.id,
-          adminId: userId,
-          fromStatus: order.status,
-          toStatus: order.status,
-          note: `Refund processed | ${deletedEntries.count} profit entry removed for admin ${userId}`
+          orderId: order.id, adminId: userId,
+          fromStatus: order.status, toStatus: order.status,
+          note: `Refund processed | ${deleted.count} profit entry removed for admin ${userId}`
         }
       });
     });
 
-    console.log('✅ Refund processed successfully:', { 
-      orderId: id, 
-      adminId: userId 
-    });
-
-    return res.status(200).json({
-      success: true,
-      message: 'Refund processed successfully.',
-      data: { orderId: parseInt(id) }
-    });
+    return res.status(200).json({ success: true, message: 'Refund processed successfully.', data: { orderId: parseInt(id) } });
   } catch (error) {
     console.error('Process refund error:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error while processing refund.'
-    });
+    return res.status(500).json({ success: false, message: 'Internal server error while processing refund.' });
   }
 };
 
-// Update order status (Admin)
+// =============================================================================
+// UPDATE ORDER STATUS (Admin)
+// =============================================================================
 const updateOrderStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status, note } = req.body;
+    const { status, note, isPaid, paymentMethod } = req.body;
     const userId = req.user.id;
 
-    console.log('Update order status:', { orderId: id, newStatus: status });
-
     const validStatuses = ['PENDING', 'PROCESSING', 'CONFIRMED', 'PAID', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'RETURN_REQUESTED', 'RETURNED'];
-    
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
-      });
+
+    if (status && !validStatuses.includes(status)) {
+      return res.status(400).json({ success: false, message: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
     }
 
     const order = await prisma.order.findUnique({
       where: { id: parseInt(id) },
-      include: {
-        items: {
-          include: {
-            product: true
-          }
-        }
-      }
+      include: { items: { include: { product: true } } }
     });
 
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found.'
-      });
-    }
+    if (!order) return res.status(404).json({ success: false, message: 'Order not found.' });
 
     const oldStatus = order.status;
 
@@ -1075,55 +737,21 @@ const updateOrderStatus = async (req, res) => {
     if (status === 'RETURNED' && order.status === 'RETURN_REQUESTED') {
       await prisma.$transaction(async (tx) => {
         for (const item of order.items) {
-          const currentProduct = await tx.product.findUnique({
-            where: { id: item.productId },
-            select: { totalSold: true }
-          });
-
+          const current = await tx.product.findUnique({ where: { id: item.productId }, select: { totalSold: true } });
           await tx.product.update({
             where: { id: item.productId },
-            data: {
-              totalStock: { increment: item.quantity },
-              totalSold: { decrement: Math.min(item.quantity, currentProduct.totalSold) }
-            }
+            data: { totalStock: { increment: item.quantity }, totalSold: { decrement: Math.min(item.quantity, current.totalSold) } }
           });
-
           await tx.inventoryLog.create({
-            data: {
-              productId: item.productId,
-              action: 'ORDER_RESTORATION',
-              quantity: item.quantity,
-              adminId: userId,
-              note: `Return approved - Order #${order.uid || order.id}`
-            }
+            data: { productId: item.productId, action: 'ORDER_RESTORATION', quantity: item.quantity, adminId: userId, note: `Return approved — Order #${order.uid || order.id}` }
           });
         }
-
         if (order.isPaid) {
-          await tx.profitLedger.deleteMany({
-            where: { orderId: order.id }
-          });
-
-          await tx.order.update({
-            where: { id: parseInt(id) },
-            data: { isPaid: false }
-          });
+          await tx.profitLedger.deleteMany({ where: { orderId: order.id } });
+          await tx.order.update({ where: { id: parseInt(id) }, data: { isPaid: false } });
         }
-
-        await tx.orderAudit.create({
-          data: {
-            orderId: order.id,
-            adminId: userId,
-            fromStatus: oldStatus,
-            toStatus: status,
-            note: note || 'Return request approved by admin, inventory restored'
-          }
-        });
-
-        await tx.order.update({
-          where: { id: parseInt(id) },
-          data: { status: 'RETURNED' }
-        });
+        await tx.orderAudit.create({ data: { orderId: order.id, adminId: userId, fromStatus: oldStatus, toStatus: 'RETURNED', note: note || 'Return approved, inventory restored' } });
+        await tx.order.update({ where: { id: parseInt(id) }, data: { status: 'RETURNED' } });
       });
     }
     // Handle CANCELLED
@@ -1131,105 +759,56 @@ const updateOrderStatus = async (req, res) => {
       await prisma.$transaction(async (tx) => {
         if (['CONFIRMED', 'PAID', 'PROCESSING', 'SHIPPED'].includes(order.status)) {
           for (const item of order.items) {
-            const currentProduct = await tx.product.findUnique({
-              where: { id: item.productId },
-              select: { totalSold: true }
-            });
-
+            const current = await tx.product.findUnique({ where: { id: item.productId }, select: { totalSold: true } });
             await tx.product.update({
               where: { id: item.productId },
-              data: {
-                totalStock: { increment: item.quantity },
-                totalSold: { decrement: Math.min(item.quantity, currentProduct.totalSold) }
-              }
+              data: { totalStock: { increment: item.quantity }, totalSold: { decrement: Math.min(item.quantity, current.totalSold) } }
             });
-
             await tx.inventoryLog.create({
-              data: {
-                productId: item.productId,
-                action: 'ORDER_RESTORATION',
-                quantity: item.quantity,
-                adminId: userId,
-                note: `Order #${order.uid || order.id} cancelled`
-              }
+              data: { productId: item.productId, action: 'ORDER_RESTORATION', quantity: item.quantity, adminId: userId, note: `Order #${order.uid || order.id} cancelled` }
             });
           }
         }
-
         if (order.isPaid) {
-          await tx.profitLedger.deleteMany({
-            where: { orderId: order.id }
-          });
-
-          await tx.order.update({
-            where: { id: parseInt(id) },
-            data: { isPaid: false }
-          });
+          await tx.profitLedger.deleteMany({ where: { orderId: order.id } });
+          await tx.order.update({ where: { id: parseInt(id) }, data: { isPaid: false } });
         }
-
-        await tx.orderAudit.create({
-          data: {
-            orderId: order.id,
-            adminId: userId,
-            fromStatus: oldStatus,
-            toStatus: status,
-            note: note || 'Order cancelled, inventory restored'
-          }
-        });
-
-        await tx.order.update({
-          where: { id: parseInt(id) },
-          data: { status: 'CANCELLED' }
-        });
+        await tx.orderAudit.create({ data: { orderId: order.id, adminId: userId, fromStatus: oldStatus, toStatus: 'CANCELLED', note: note || 'Order cancelled, inventory restored' } });
+        await tx.order.update({ where: { id: parseInt(id) }, data: { status: 'CANCELLED' } });
       });
     }
     else {
-      await prisma.$transaction(async (tx) => {
-        await tx.orderAudit.create({
-          data: {
-            orderId: order.id,
-            adminId: userId,
-            fromStatus: oldStatus,
-            toStatus: status,
-            note: note || `Status updated to ${status}`
-          }
-        });
+      // Generic status update — also allow updating isPaid and paymentMethod directly
+      const updateFields = {};
+      if (status) updateFields.status = status;
+      if (isPaid !== undefined) updateFields.isPaid = isPaid;
+      if (paymentMethod !== undefined) updateFields.paymentMethod = paymentMethod;
 
-        await tx.order.update({
-          where: { id: parseInt(id) },
-          data: { status }
-        });
+      await prisma.$transaction(async (tx) => {
+        if (status) {
+          await tx.orderAudit.create({
+            data: { orderId: order.id, adminId: userId, fromStatus: oldStatus, toStatus: status, note: note || `Status updated to ${status}` }
+          });
+        }
+        await tx.order.update({ where: { id: parseInt(id) }, data: updateFields });
       });
     }
 
     const updatedOrder = await prisma.order.findUnique({
       where: { id: parseInt(id) },
-      include: {
-        items: {
-          include: {
-            product: true
-          }
-        }
-      }
+      include: { items: { include: { product: true } } }
     });
 
-    console.log('Order status updated:', updatedOrder.id);
-
-    return res.status(200).json({
-      success: true,
-      message: 'Order status updated successfully.',
-      data: updatedOrder
-    });
+    return res.status(200).json({ success: true, message: 'Order updated successfully.', data: updatedOrder });
   } catch (error) {
     console.error('Update order status error:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error while updating order status.'
-    });
+    return res.status(500).json({ success: false, message: 'Internal server error while updating order status.' });
   }
 };
 
-// Customer request return
+// =============================================================================
+// REQUEST RETURN (Customer)
+// =============================================================================
 const requestReturn = async (req, res) => {
   try {
     const { id } = req.params;
@@ -1238,67 +817,26 @@ const requestReturn = async (req, res) => {
 
     const order = await prisma.order.findUnique({
       where: { id: parseInt(id) },
-      include: { 
-        items: { include: { product: { include: { createdBy: true } } } }
-      }
+      include: { items: { include: { product: { include: { createdBy: true } } } } }
     });
 
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found.'
-      });
-    }
-
-    if (order.userId !== userId) {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied.'
-      });
-    }
-
-    if (order.status !== 'DELIVERED') {
-      return res.status(400).json({
-        success: false,
-        message: 'Only delivered orders can be returned.'
-      });
-    }
+    if (!order) return res.status(404).json({ success: false, message: 'Order not found.' });
+    if (order.userId !== userId) return res.status(403).json({ success: false, message: 'Access denied.' });
+    if (order.status !== 'DELIVERED') return res.status(400).json({ success: false, message: 'Only delivered orders can be returned.' });
 
     await prisma.$transaction(async (tx) => {
-      await tx.order.update({
-        where: { id: parseInt(id) },
-        data: { 
-          status: 'RETURN_REQUESTED',
-          note: `${order.note || ''}\n\nReturn requested: ${reason}`.trim()
-        }
-      });
-
+      await tx.order.update({ where: { id: parseInt(id) }, data: { status: 'RETURN_REQUESTED', note: `${order.note || ''}\n\nReturn requested: ${reason}`.trim() } });
       await tx.orderAudit.create({
-        data: {
-          orderId: order.id,
-          fromStatus: 'DELIVERED',
-          toStatus: 'RETURN_REQUESTED',
-          note: `Customer return request: ${reason}`
-        }
+        data: { orderId: order.id, fromStatus: 'DELIVERED', toStatus: 'RETURN_REQUESTED', note: `Customer return request: ${reason}` }
       });
     });
 
-    const updatedOrder = await prisma.order.findUnique({
-      where: { id: parseInt(id) },
-      include: { items: { include: { product: true } } }
-    });
+    const updatedOrder = await prisma.order.findUnique({ where: { id: parseInt(id) }, include: { items: { include: { product: true } } } });
 
-    return res.status(200).json({
-      success: true,
-      message: 'Return request submitted. Awaiting admin approval.',
-      data: updatedOrder
-    });
+    return res.status(200).json({ success: true, message: 'Return request submitted. Awaiting admin approval.', data: updatedOrder });
   } catch (error) {
     console.error('Request return error:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error.'
-    });
+    return res.status(500).json({ success: false, message: 'Internal server error.' });
   }
 };
 
